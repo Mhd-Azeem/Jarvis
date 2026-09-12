@@ -2,7 +2,6 @@ package com.azeem.jarvis
 
 import android.content.Intent
 import android.os.Bundle
-import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
@@ -22,7 +21,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -31,23 +29,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.core.app.NotificationManagerCompat
 import com.azeem.jarvis.core.JarvisCommandProcessor
-import com.azeem.jarvis.service.JarvisAccessibilityService
 import java.util.Locale
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var commandProcessor: JarvisCommandProcessor
     private var tts: TextToSpeech? = null
-    private var accessibilityEnabled by mutableStateOf(false)
-    private var notificationAccessEnabled by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         commandProcessor = JarvisCommandProcessor(applicationContext)
         tts = TextToSpeech(this, this)
-        refreshServiceStates()
 
         setContent {
             MaterialTheme {
@@ -71,8 +64,6 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         command = command,
                         onCommandChange = { command = it },
                         response = response,
-                        accessibilityEnabled = accessibilityEnabled,
-                        notificationAccessEnabled = notificationAccessEnabled,
                         onRun = { response = runCommand(command) },
                         onListen = {
                             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -81,22 +72,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Jarvis")
                             }
                             speechLauncher.launch(intent)
-                        },
-                        onAccessibilitySettings = {
-                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        },
-                        onNotificationSettings = {
-                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         }
                     )
                 }
             }
         }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        refreshServiceStates()
     }
 
     override fun onInit(status: Int) {
@@ -115,15 +95,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun runCommand(command: String): String {
         val result = commandProcessor.execute(command)
         tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "jarvis-response")
-        refreshServiceStates()
         return result
-    }
-
-    private fun refreshServiceStates() {
-        accessibilityEnabled = JarvisAccessibilityService.instance != null
-        notificationAccessEnabled = NotificationManagerCompat
-            .getEnabledListenerPackages(this)
-            .contains(packageName)
     }
 }
 
@@ -132,12 +104,8 @@ private fun JarvisDashboard(
     command: String,
     onCommandChange: (String) -> Unit,
     response: String,
-    accessibilityEnabled: Boolean,
-    notificationAccessEnabled: Boolean,
     onRun: () -> Unit,
-    onListen: () -> Unit,
-    onAccessibilitySettings: () -> Unit,
-    onNotificationSettings: () -> Unit
+    onListen: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -147,17 +115,22 @@ private fun JarvisDashboard(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("JARVIS", style = MaterialTheme.typography.headlineLarge)
-        Text("Personal Android control assistant", style = MaterialTheme.typography.bodyLarge)
+        Text("Personal Android assistant", style = MaterialTheme.typography.bodyLarge)
 
-        StatusCard("Accessibility control", accessibilityEnabled, onAccessibilitySettings)
-        StatusCard("Notification access", notificationAccessEnabled, onNotificationSettings)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Compatibility mode", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(6.dp))
+                Text("Advanced screen automation and notification-reading services are not included in this build. Normal Android assistant functions remain available.")
+            }
+        }
 
         OutlinedTextField(
             value = command,
             onValueChange = onCommandChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Command") },
-            placeholder = { Text("e.g. open YouTube, scroll down, volume 40") },
+            placeholder = { Text("e.g. open YouTube, flashlight on, volume 40") },
             minLines = 2
         )
 
@@ -183,40 +156,15 @@ private fun JarvisDashboard(
 
         Text("Commands available now", style = MaterialTheme.typography.titleMedium)
         Text(
-            "• open YouTube\n" +
+            "• open YouTube / WhatsApp / another installed app\n" +
                 "• flashlight on / off\n" +
                 "• volume 40\n" +
                 "• battery\n" +
-                "• back / home / recents\n" +
-                "• notifications / quick settings\n" +
-                "• scroll down / scroll up\n" +
-                "• tap Search\n" +
-                "• type hello\n" +
-                "• read notifications"
+                "• open settings\n" +
+                "• Wi-Fi settings\n" +
+                "• Bluetooth settings\n" +
+                "• display settings\n" +
+                "• sound settings"
         )
-    }
-}
-
-@androidx.compose.runtime.Composable
-private fun StatusCard(
-    title: String,
-    enabled: Boolean,
-    onSettings: () -> Unit
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(if (enabled) "Enabled" else "Required")
-            }
-            OutlinedButton(onClick = onSettings) {
-                Text(if (enabled) "Settings" else "Enable")
-            }
-        }
     }
 }
