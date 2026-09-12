@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -29,17 +30,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import com.azeem.jarvis.core.JarvisCommandProcessor
+import com.azeem.jarvis.update.UpdateManager
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var commandProcessor: JarvisCommandProcessor
+    private lateinit var updateManager: UpdateManager
     private var tts: TextToSpeech? = null
+    private var updateStatus by mutableStateOf("Checking GitHub for updates…")
+    private var pendingUpdate by mutableStateOf<UpdateManager.AvailableUpdate?>(null)
+    private var updateBusy by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         commandProcessor = JarvisCommandProcessor(applicationContext)
+        updateManager = UpdateManager(this)
         tts = TextToSpeech(this, this)
 
         setContent {
@@ -64,6 +73,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         command = command,
                         onCommandChange = { command = it },
                         response = response,
+                        updateStatus = updateStatus,
+                        updateAvailable = pendingUpdate != null,
+                        updateBusy = updateBusy,
                         onRun = { response = runCommand(command) },
                         onListen = {
                             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -72,11 +84,15 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Jarvis")
                             }
                             speechLauncher.launch(intent)
-                        }
+                        },
+                        onCheckUpdate = ::checkForUpdates,
+                        onInstallUpdate = ::installPendingUpdate
                     )
                 }
             }
         }
+
+        checkForUpdates()
     }
 
     override fun onInit(status: Int) {
@@ -97,6 +113,42 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "jarvis-response")
         return result
     }
+
+    private fun checkForUpdates() {
+        if (updateBusy) return
+        updateBusy = true
+        updateStatus = "Checking GitHub for updates…"
+        lifecycleScope.launch {
+            when (val result = updateManager.checkForUpdate()) {
+                is UpdateManager.CheckResult.Available -> {
+                    pendingUpdate = result.update
+                    updateStatus = "Jarvis Build #${result.update.buildNumber} is available."
+                }
+                is UpdateManager.CheckResult.Current -> {
+                    pendingUpdate = null
+                    updateStatus = "Jarvis is up to date (Build #${result.currentBuild})."
+                }
+                is UpdateManager.CheckResult.Error -> {
+                    updateStatus = result.message
+                }
+            }
+            updateBusy = false
+        }
+    }
+
+    private fun installPendingUpdate() {
+        val update = pendingUpdate ?: run {
+            checkForUpdates()
+            return
+        }
+        if (updateBusy) return
+        updateBusy = true
+        updateStatus = "Downloading Jarvis Build #${update.buildNumber}…"
+        lifecycleScope.launch {
+            updateStatus = updateManager.downloadAndInstall(update)
+            updateBusy = false
+        }
+    }
 }
 
 @androidx.compose.runtime.Composable
@@ -104,8 +156,13 @@ private fun JarvisDashboard(
     command: String,
     onCommandChange: (String) -> Unit,
     response: String,
+    updateStatus: String,
+    updateAvailable: Boolean,
+    updateBusy: Boolean,
     onRun: () -> Unit,
-    onListen: () -> Unit
+    onListen: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -115,7 +172,28 @@ private fun JarvisDashboard(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("JARVIS", style = MaterialTheme.typography.headlineLarge)
-        Text("Personal Android assistant", style = MaterialTheme.typography.bodyLarge)
+        Text("Personal Android assistant • Build #${BuildConfig.VERSION_CODE}", style = MaterialTheme.typography.bodyLarge)
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Automatic updates", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(6.dp))
+                Text(updateStatus)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = onCheckUpdate, enabled = !updateBusy) {
+                        Text(if (updateBusy) "Please wait…" else "Check")
+                    }
+                    if (updateAvailable) {
+                        Button(onClick = onInstallUpdate, enabled = !updateBusy) {
+                            Text("Download & Update")
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Android will still ask you to confirm the final system Update installation.")
+            }
+        }
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
