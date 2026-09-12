@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="accessibility_description">Allows Jarvis to perform requested screen actions such as Back, Home, Recents, scrolling, tapping visible controls, and entering text.</string>
+</resources>
