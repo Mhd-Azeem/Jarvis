@@ -1,13 +1,113 @@
-name: Build Jarvis
+name: Build Jarvis Android + Windows
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  placeholder:
+  android:
+    name: Build Android APK
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "Jarvis release workflow temporarily paused while Windows support is added."
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Build Android APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Prepare Android APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk Jarvis-installable.apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-android
+          path: Jarvis-installable.apk
+          if-no-files-found: error
+
+  windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish standalone Windows EXE
+        shell: pwsh
+        run: |
+          dotnet publish windows/Jarvis.Windows.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -o windows/publish
+          Copy-Item windows/publish/Jarvis-Windows.exe Jarvis-Windows.exe
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-windows
+          path: Jarvis-Windows.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish combined release
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: jarvis-android
+          path: release
+
+      - name: Download Windows EXE
+        uses: actions/download-artifact@v4
+        with:
+          name: jarvis-windows
+          path: release
+
+      - name: Verify release files
+        run: ls -lh release
+
+      - name: Publish Android + Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" \
+            release/Jarvis-installable.apk \
+            release/Jarvis-Windows.exe \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Jarvis Build #${{ github.run_number }} — Android + Windows" \
+            --notes "Jarvis cross-platform build from commit ${{ github.sha }}. Includes the Android compatibility APK and a self-contained Windows x64 executable. The Windows executable is currently unsigned, so Windows SmartScreen may show an Unknown publisher warning."
