@@ -4,13 +4,31 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1,5'
 
 permissions:
   contents: write
 
+concurrency:
+  group: jarvis-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  signing-cache-keepalive:
+    name: Keep Android signing cache alive
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore signing cache
+        uses: actions/cache@v4
+        with:
+          path: .signing
+          key: jarvis-android-signing-v1
+
   android:
     name: Build Android APK
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
     steps:
@@ -34,11 +52,42 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Build Android APK
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Restore stable Android signing material
+        id: signing-cache
+        uses: actions/cache@v4
+        with:
+          path: .signing
+          key: jarvis-android-signing-v1
+
+      - name: Create signing material on first updater build
+        if: steps.signing-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p .signing
+          SIGNING_PASSWORD="$(openssl rand -hex 24)"
+          printf 'JARVIS_KEYSTORE_PASSWORD=%s\nJARVIS_KEY_PASSWORD=%s\nJARVIS_KEY_ALIAS=jarvis\n' \
+            "$SIGNING_PASSWORD" "$SIGNING_PASSWORD" > .signing/signing.env
+          keytool -genkeypair -v \
+            -keystore .signing/jarvis-release.jks \
+            -storepass "$SIGNING_PASSWORD" \
+            -alias jarvis \
+            -keypass "$SIGNING_PASSWORD" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname 'CN=Jarvis, OU=Personal, O=Azeem, C=LK'
+
+      - name: Build signed Android release APK
+        shell: bash
+        run: |
+          set -a
+          source .signing/signing.env
+          set +a
+          export JARVIS_KEYSTORE_PATH="${GITHUB_WORKSPACE}/.signing/jarvis-release.jks"
+          gradle :app:assembleRelease --stacktrace
 
       - name: Prepare Android APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Jarvis-installable.apk
+        run: cp app/build/outputs/apk/release/app-release.apk Jarvis-installable.apk
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
@@ -49,6 +98,7 @@ jobs:
 
   windows:
     name: Build Windows EXE
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
 
     steps:
@@ -59,6 +109,18 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
+      - name: Embed release build number
+        shell: pwsh
+        run: |
+          @"
+          namespace Jarvis.Windows;
+
+          internal static class BuildInfo
+          {
+              internal const int ReleaseBuild = $env:GITHUB_RUN_NUMBER;
+          }
+          "@ | Set-Content windows/BuildInfo.cs -Encoding utf8
 
       - name: Publish standalone Windows EXE
         shell: pwsh
@@ -80,6 +142,7 @@ jobs:
 
   release:
     name: Publish combined release
+    if: github.event_name != 'schedule'
     needs: [android, windows]
     runs-on: ubuntu-latest
 
@@ -109,5 +172,5 @@ jobs:
             release/Jarvis-Windows.exe \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "Jarvis Build #${{ github.run_number }} — Android + Windows" \
-            --notes "Jarvis cross-platform build from commit ${{ github.sha }}. Includes the Android compatibility APK and a self-contained Windows x64 executable. The Windows executable is currently unsigned, so Windows SmartScreen may show an Unknown publisher warning."
+            --title "Jarvis Build #${{ github.run_number }} — Auto Update" \
+            --notes "Jarvis cross-platform auto-update build from commit ${{ github.sha }}. Android checks GitHub Releases and downloads newer APKs in-app; Android still requires the normal system Update confirmation. Windows checks GitHub Releases on startup and can replace/relaunch its EXE automatically after confirmation. The Windows executable is currently unsigned, so SmartScreen may show Unknown publisher."
