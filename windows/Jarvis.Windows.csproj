@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Jarvis-Windows</AssemblyName>
     <RootNamespace>Jarvis.Windows</RootNamespace>
+    <StartupObject>Jarvis.Windows.ModernProgram</StartupObject>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
