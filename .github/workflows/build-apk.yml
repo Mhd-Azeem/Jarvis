@@ -1,58 +1,13 @@
-name: Build Jarvis APK
+name: Build Jarvis
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  placeholder:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
-
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
-
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
-
-      - name: Prepare APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Jarvis-installable.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Jarvis-installable-apk
-          path: Jarvis-installable.apk
-          if-no-files-found: error
-
-      - name: Publish APK to Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" Jarvis-installable.apk \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "Jarvis Installable Build #${{ github.run_number }}" \
-            --notes "Compatibility build using standard Android APIs. Advanced Accessibility and notification-listener services are not included. Built from commit ${{ github.sha }}."
+      - run: echo "Jarvis release workflow temporarily paused while Windows support is added."
