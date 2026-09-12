@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val ciBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+val ciKeystorePath = System.getenv("JARVIS_KEYSTORE_PATH")
+
 android {
     namespace = "com.azeem.jarvis"
     compileSdk = 36
@@ -12,17 +15,29 @@ android {
         applicationId = "com.azeem.jarvis"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = ciBuildNumber
+        versionName = "0.2.$ciBuildNumber"
 
         vectorDrawables {
             useSupportLibrary = true
         }
     }
 
+    val jarvisSigning = if (!ciKeystorePath.isNullOrBlank()) {
+        signingConfigs.create("jarvis") {
+            storeFile = file(ciKeystorePath)
+            storePassword = System.getenv("JARVIS_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("JARVIS_KEY_ALIAS")
+            keyPassword = System.getenv("JARVIS_KEY_PASSWORD")
+        }
+    } else {
+        null
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = jarvisSigning
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
