@@ -1,6 +1,8 @@
 name: Build Jarvis APK
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -35,13 +37,13 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Prepare APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Jarvis-debug.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Jarvis-installable.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-debug-apk
-          path: Jarvis-debug.apk
+          name: Jarvis-installable-apk
+          path: Jarvis-installable.apk
           if-no-files-found: error
 
       - name: Publish APK to Releases
@@ -49,8 +51,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" Jarvis-debug.apk \
+          gh release create "$TAG" Jarvis-installable.apk \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "Jarvis Build #${{ github.run_number }}" \
-            --notes "Automatic Jarvis debug APK build from commit ${{ github.sha }}."
+            --title "Jarvis Installable Build #${{ github.run_number }}" \
+            --notes "Compatibility build using standard Android APIs. Advanced Accessibility and notification-listener services are not included. Built from commit ${{ github.sha }}."
