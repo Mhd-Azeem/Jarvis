@@ -6,9 +6,6 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.os.BatteryManager
-import android.provider.Settings
-import com.azeem.jarvis.service.JarvisAccessibilityService
-import com.azeem.jarvis.service.JarvisNotificationListener
 
 class JarvisCommandProcessor(private val context: Context) {
 
@@ -18,43 +15,13 @@ class JarvisCommandProcessor(private val context: Context) {
         if (command.isBlank()) return "I didn't hear a command."
 
         return when {
-            lower == "back" || lower.contains("go back") -> accessibilityAction("Going back") { it.goBack() }
-            lower == "home" || lower.contains("go home") -> accessibilityAction("Going home") { it.goHome() }
-            lower.contains("recent") -> accessibilityAction("Opening recent apps") { it.showRecents() }
-            lower.contains("quick settings") -> accessibilityAction("Opening Quick Settings") { it.showQuickSettings() }
-            lower == "notifications" || lower.contains("notification shade") -> accessibilityAction("Opening notifications") { it.showNotifications() }
-            lower.contains("scroll down") -> accessibilityAction("Scrolling down") { it.scrollForward() }
-            lower.contains("scroll up") -> accessibilityAction("Scrolling up") { it.scrollBackward() }
-            lower.startsWith("tap ") || lower.startsWith("click ") -> {
-                val text = command.substringAfter(' ').trim()
-                accessibilityAction("Tapping $text") { it.clickText(text) }
-            }
-            lower.startsWith("type ") -> {
-                val text = command.substringAfter(' ').trim()
-                accessibilityAction("Typing") { it.setText(text) }
-            }
             lower.startsWith("open ") -> openApp(command.substringAfter(' ').trim())
             lower.contains("flashlight on") || lower.contains("torch on") -> setTorch(true)
             lower.contains("flashlight off") || lower.contains("torch off") -> setTorch(false)
             lower.startsWith("volume ") || lower.contains("volume to ") -> setVolume(command)
             lower.contains("battery") -> batteryStatus()
-            lower.contains("read") && lower.contains("notification") -> readNotifications()
-            lower.contains("accessibility settings") -> {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                "Opening Accessibility settings."
-            }
-            lower.contains("notification access") -> {
-                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                "Opening Notification access settings."
-            }
-            else -> "I don't know that command yet. Try open YouTube, flashlight on, volume 40, scroll down, tap Search, type hello, or read notifications."
+            else -> "That command is not available in this compatibility build. Try open YouTube, flashlight on, volume 40, or battery."
         }
-    }
-
-    private fun accessibilityAction(successMessage: String, action: (JarvisAccessibilityService) -> Boolean): String {
-        val service = JarvisAccessibilityService.instance
-            ?: return "Accessibility control is not enabled. Open Jarvis and enable Accessibility access first."
-        return if (action(service)) successMessage else "I couldn't perform that screen action."
     }
 
     private fun openApp(name: String): String {
@@ -103,15 +70,5 @@ class JarvisCommandProcessor(private val context: Context) {
         val battery = context.getSystemService(BatteryManager::class.java)
         val level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return if (level in 0..100) "Battery is at $level percent." else "I couldn't read the battery level."
-    }
-
-    private fun readNotifications(): String {
-        val items = JarvisNotificationListener.recent(5)
-        if (items.isEmpty()) return "I don't have any recent notifications. Make sure Notification access is enabled."
-        return items.joinToString(separator = ". ") { item ->
-            val source = item.title.ifBlank { item.packageName.substringAfterLast('.') }
-            val body = item.text.ifBlank { "new notification" }
-            "$source: $body"
-        }
     }
 }
