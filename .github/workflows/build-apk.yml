@@ -77,7 +77,7 @@ jobs:
   release:
     name: Publish Android release
     needs: [android]
-    if: ${{ github.ref == 'refs/heads/main' && needs.android.result == 'success' }}
+    if: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/az-jarvis-core') && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -89,4 +89,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           test -s release/Jarvis-Android.apk
-          gh release create "build-${{ github.run_number }}" release/Jarvis-Android.apk --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Jarvis Build #${{ github.run_number }}" --notes "Android APK signed with the existing Jarvis update key. Android installation requires system confirmation. Windows work is paused. This release contains Android only."
+          gh release create "build-${{ github.run_number }}" release/Jarvis-Android.apk --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Jarvis Android Preview #${{ github.run_number }}" --notes "Android development preview. Signed with the existing Jarvis update key. Android installation requires system confirmation. Offline Hey Jarvis still needs a Nubia V70 Max microphone test. Tasks, calendar, agents, and Tamil/Sinhala speech remain incomplete. Windows work is paused; this release contains Android only."
