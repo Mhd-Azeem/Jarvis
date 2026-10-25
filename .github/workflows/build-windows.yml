@@ -46,6 +46,13 @@ jobs:
         run: |
           $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -ArgumentList '--self-test' -PassThru -Wait -WindowStyle Hidden
           if ($process.ExitCode -ne 0) { throw "Jarvis self-test exited with code $($process.ExitCode)" }
+      - name: Verify desktop window launches
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) { throw "Jarvis desktop exited early with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
       - uses: actions/upload-artifact@v4
         with:
           name: jarvis-windows
