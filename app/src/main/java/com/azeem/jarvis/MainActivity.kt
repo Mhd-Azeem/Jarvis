@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.os.Bundle
+import android.os.Build
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
@@ -42,6 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +69,9 @@ import com.azeem.jarvis.core.AiClient
 import com.azeem.jarvis.core.ChatTurn
 import com.azeem.jarvis.core.JarvisCommandProcessor
 import com.azeem.jarvis.core.SecureStore
+import com.azeem.jarvis.core.WakeModel
+import com.azeem.jarvis.core.WakeUiState
+import com.azeem.jarvis.core.JarvisWakeService
 import com.azeem.jarvis.update.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -105,6 +110,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var availableUpdate by mutableStateOf<UpdateManager.AvailableUpdate?>(null)
     private var requestCameraPermission: (() -> Unit)? = null
     private var pendingCameraCommand: String? = null
+    private var requestMicrophonePermission: (() -> Unit)? = null
+    private var requestNotificationPermission: (() -> Unit)? = null
+    private var wakeInstalled by mutableStateOf(false)
+    private var wakeInstalling by mutableStateOf(false)
+    private var wakeInstallStatus by mutableStateOf("Model not installed")
+    private var wakeSensitivity by mutableStateOf(0.55f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -117,6 +128,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         model = secure.get("model") ?: model
         speakReplies = secure.get("speak") != "false"
         turns = readHistory()
+        wakeInstalled = WakeModel(this).installed()
+        wakeInstallStatus = if (wakeInstalled) "Offline model ready" else "Download the English offline model before enabling wake." 
+        wakeSensitivity = secure.get("wake_sensitivity")?.toFloatOrNull() ?: 0.55f
         page = if (secure.get("onboarded") == "yes") Page.Home else Page.Welcome
 
         setContent {
@@ -127,6 +141,14 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 else response = "Camera permission is required to control the flashlight."
             }
             requestCameraPermission = { cameraLauncher.launch(Manifest.permission.CAMERA) }
+            val microphoneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                if (granted) startWakeService() else wakeInstallStatus = "Microphone permission was denied."
+            }
+            requestMicrophonePermission = { microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+            val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                if (granted) startWakeService() else wakeInstallStatus = "Notification permission is required for persistent listening."
+            }
+            requestNotificationPermission = { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
             val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 listening = false
                 val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
@@ -157,20 +179,33 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     speakReplies = speakReplies,
                     onSpeakReplies = { speakReplies = it; secure.put("speak", it.toString()) },
                     updateStatus = updateStatus,
+                    wakeInstalled = wakeInstalled,
+                    wakeInstalling = wakeInstalling,
+                    wakeInstallStatus = wakeInstallStatus,
+                    wakeStatus = WakeUiState.status,
+                    wakeEnabled = WakeUiState.enabled,
+                    wakeSensitivity = wakeSensitivity,
                     onStart = { secure.put("onboarded", "yes"); page = Page.Home },
+                    onInstallWakeModel = ::installWakeModel,
+                    onWakeToggle = { enabled -> if (enabled) startWakeService() else stopWakeService() },
+                    onWakeSensitivity = { wakeSensitivity = it; secure.put("wake_sensitivity", it.toString()) },
                     onSubmit = { submit(prompt) },
                     onListen = {
-                        listening = true
-                        page = Page.Voice
-                        try {
-                            launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak with Jarvis")
-                            })
-                        } catch (_: Exception) {
-                            listening = false
-                            response = "No speech recognition service is available on this device."
+                        if (WakeUiState.enabled) {
+                            response = "Turn off Hey Jarvis before using push-to-talk."
+                        } else {
+                            listening = true
+                            page = Page.Voice
+                            try {
+                                launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak with Jarvis")
+                                })
+                            } catch (_: Exception) {
+                                listening = false
+                                response = "No speech recognition service is available on this device."
+                            }
                         }
                     },
                     onQuick = { submit(it) },
@@ -184,6 +219,44 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun installWakeModel() {
+        if (wakeInstalling || wakeInstalled) return
+        wakeInstalling = true
+        lifecycleScope.launch {
+            wakeInstallStatus = WakeModel(this@MainActivity).install { message ->
+                withContext(Dispatchers.Main) { wakeInstallStatus = message }
+            }
+            wakeInstalled = WakeModel(this@MainActivity).installed()
+            wakeInstalling = false
+        }
+    }
+
+    private fun startWakeService() {
+        if (!WakeModel(this).installed()) {
+            wakeInstallStatus = "Install the offline model first."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestMicrophonePermission?.invoke()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestNotificationPermission?.invoke()
+            return
+        }
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, JarvisWakeService::class.java))
+            secure.put("wake_enabled", "true")
+        } catch (error: Exception) {
+            wakeInstallStatus = error.message ?: "Android blocked microphone service startup."
+        }
+    }
+
+    private fun stopWakeService() {
+        stopService(Intent(this, JarvisWakeService::class.java))
+        secure.put("wake_enabled", "false")
+    }
     private fun submit(input: String) {
         val value = input.trim()
         if (value.isEmpty() || busy) return
@@ -306,6 +379,15 @@ private fun JarvisApp(
     speakReplies: Boolean,
     onSpeakReplies: (Boolean) -> Unit,
     updateStatus: String,
+    wakeInstalled: Boolean,
+    wakeInstalling: Boolean,
+    wakeInstallStatus: String,
+    wakeStatus: String,
+    wakeEnabled: Boolean,
+    wakeSensitivity: Float,
+    onInstallWakeModel: () -> Unit,
+    onWakeToggle: (Boolean) -> Unit,
+    onWakeSensitivity: (Float) -> Unit,
     onStart: () -> Unit,
     onSubmit: () -> Unit,
     onListen: () -> Unit,
@@ -397,7 +479,7 @@ private fun JarvisApp(
                         Spacer(Modifier.height(25.dp))
                         Vortex("♩", listening)
                         Text(if (listening) "Listening…" else "Speak with Jarvis", color = TextColor, fontSize = 27.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-                        Text(if (listening) "Speak naturally" else "Tap the microphone to speak", color = Dim, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                        Text(if (wakeEnabled) wakeStatus else if (listening) "Speak naturally" else "Tap the microphone to speak", color = Dim, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
                         Button(onClick = onListen, modifier = Modifier.align(Alignment.CenterHorizontally), colors = ButtonDefaults.buttonColors(containerColor = Purple)) { Text("🎙  Start listening") }
                         Glass { Text(response, color = TextColor) }
                     }
@@ -431,7 +513,21 @@ private fun JarvisApp(
                             OutlinedButton(onClick = onAccessibilitySettings) { Text("Accessibility controls") }
                             OutlinedButton(onClick = onNotificationSettings) { Text("Notification access") }
                             Text("Enable these Android permissions only if you want voice control of other apps or notification summaries.", color = Dim, fontSize = 12.sp)
-                            Text("Wake-word listening: not available in this build", color = Dim, fontSize = 12.sp)
+                            Text("HEY JARVIS • OFFLINE", color = Pink, fontWeight = FontWeight.Bold)
+                            Text(wakeInstallStatus, color = Dim, fontSize = 12.sp)
+                            if (!wakeInstalled) {
+                                Button(onClick = onInstallWakeModel, enabled = !wakeInstalling) {
+                                    Text(if (wakeInstalling) "Installing…" else "Install offline model")
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Enable wake phrase", color = TextColor)
+                                Switch(checked = wakeEnabled, onCheckedChange = onWakeToggle, enabled = wakeInstalled && !wakeInstalling)
+                            }
+                            Text(wakeStatus, color = Dim, fontSize = 12.sp)
+                            Text("Sensitivity ${(wakeSensitivity * 100).toInt()}%", color = TextColor, fontSize = 12.sp)
+                            Slider(value = wakeSensitivity, onValueChange = onWakeSensitivity, valueRange = 0.35f..0.9f)
+                            Text("Android shows a persistent microphone notification while listening. Audio stays on this device; recognized text goes to your AI provider only for requests that need it.", color = Dim, fontSize = 12.sp)
                             Text("Microphone starts only when you tap Speak. Speech recognition may use your device's configured service.", color = Dim, fontSize = 12.sp)
                         }
                         Glass {
