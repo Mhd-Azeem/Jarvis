@@ -955,7 +955,7 @@ internal sealed class ArcReactorControl : Control
 
     public ArcReactorControl()
     {
-        DoubleBuffered = true;
+        SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
         BackColor = Color.Transparent;
         timer.Tick += (_, _) => { angle = (angle + (Listening ? 5.4F : 2.0F)) % 360F; Invalidate(); };
         timer.Start();
