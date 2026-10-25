@@ -7,7 +7,7 @@ namespace Jarvis.Windows;
 
 internal static class UpdateService
 {
-    private const string LatestReleaseApi = "https://api.github.com/repos/Mhd-Azeem/Jarvis/releases/latest";
+    private const string ReleasesApi = "https://api.github.com/repos/Mhd-Azeem/Jarvis/releases?per_page=20";
     private const string WindowsAssetName = "Jarvis-Windows.exe";
 
     internal static async Task CheckAndOfferUpdateAsync()
@@ -18,24 +18,26 @@ internal static class UpdateService
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Jarvis-Windows-Updater");
             client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 
-            var json = await client.GetStringAsync(LatestReleaseApi);
+            var json = await client.GetStringAsync(ReleasesApi);
             using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-            var tag = root.GetProperty("tag_name").GetString() ?? string.Empty;
-            var latestBuild = ParseBuildNumber(tag);
-            if (latestBuild <= BuildInfo.ReleaseBuild) return;
-
+            var latestBuild = BuildInfo.ReleaseBuild;
             string? downloadUrl = null; string? expectedDigest = null;
-            foreach (var asset in root.GetProperty("assets").EnumerateArray())
+            foreach (var release in document.RootElement.EnumerateArray())
             {
-                if (string.Equals(asset.GetProperty("name").GetString(), WindowsAssetName, StringComparison.OrdinalIgnoreCase))
+                var tag = release.GetProperty("tag_name").GetString() ?? string.Empty;
+                var build = ParseBuildNumber(tag);
+                if (build <= latestBuild) continue;
+                foreach (var asset in release.GetProperty("assets").EnumerateArray())
                 {
-                    downloadUrl = asset.GetProperty("browser_download_url").GetString(); expectedDigest = asset.TryGetProperty("digest", out var digest) ? digest.GetString() : null;
-                    break;
+                    if (!string.Equals(asset.GetProperty("name").GetString(), WindowsAssetName, StringComparison.OrdinalIgnoreCase)) continue;
+                    var digest = asset.TryGetProperty("digest", out var hash) ? hash.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(digest) || !digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) continue;
+                    latestBuild = build;
+                    downloadUrl = asset.GetProperty("browser_download_url").GetString();
+                    expectedDigest = digest;
                 }
             }
-
-            if (string.IsNullOrWhiteSpace(downloadUrl) || string.IsNullOrWhiteSpace(expectedDigest) || !expectedDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) return;
+            if (string.IsNullOrWhiteSpace(downloadUrl) || string.IsNullOrWhiteSpace(expectedDigest)) return;
 
             var answer = MessageBox.Show(
                 $"Jarvis Build #{latestBuild} is available.\n\nUpdate now? Jarvis will download the new version, restart itself, and continue automatically.",
@@ -124,7 +126,7 @@ Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue
 
     private static int ParseBuildNumber(string tag)
     {
-        const string prefix = "build-";
+        var prefix = tag.StartsWith("windows-build-", StringComparison.OrdinalIgnoreCase) ? "windows-build-" : "build-";
         if (!tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return 0;
         return int.TryParse(tag[prefix.Length..], out var build) ? build : 0;
     }

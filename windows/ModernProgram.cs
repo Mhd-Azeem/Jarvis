@@ -3,6 +3,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Jarvis.Windows;
 
@@ -36,6 +37,7 @@ internal sealed class ModernJarvisForm : Form
     private readonly ArcReactorControl reactor = new();
     private AssistantSettings assistantSettings = AssistantData.LoadSettings();
     private readonly List<AssistantTurn> history = AssistantData.LoadHistory();
+    private readonly List<JarvisTask> tasks = AssistantData.LoadTasks();
     private CancellationTokenSource? pendingRequest;
     private readonly NotifyIcon trayIcon = new();
     private bool exitRequested;
@@ -94,6 +96,7 @@ internal sealed class ModernJarvisForm : Form
 
         AcceptButton = runButton;
         monitorTimer.Tick += (_, _) => monitorLabel.Text = SystemMonitor.Snapshot();
+        monitorTimer.Tick += (_, _) => CheckReminders();
         monitorLabel.Text = SystemMonitor.Snapshot();
         monitorTimer.Start();
         wake.StatusChanged += status => { if (IsHandleCreated) BeginInvoke((Action)(() => { listeningLabel.Text = status; reactor.Listening = wake.IsRunning; })); };
@@ -209,6 +212,11 @@ internal sealed class ModernJarvisForm : Form
         historyButton.Margin = new Padding(0, 8, 0, 0);
         historyButton.Click += (_, _) => ShowHistory();
         content.Controls.Add(historyButton);
+        var tasksButton = CreateButton("Tasks and reminders", false);
+        tasksButton.Width = 230;
+        tasksButton.Margin = new Padding(0, 8, 0, 0);
+        tasksButton.Click += (_, _) => ShowTasks();
+        content.Controls.Add(tasksButton);
         var cancelButton = CreateButton("Cancel AI response", false);
         cancelButton.Width = 230;
         cancelButton.Margin = new Padding(0, 8, 0, 0);
@@ -659,12 +667,82 @@ internal sealed class ModernJarvisForm : Form
         dialog.Controls.Add(clear);
         dialog.ShowDialog(this);
     }
+    private void ShowTasks()
+    {
+        using var dialog = new Form { Text = "Jarvis tasks and reminders", Size = new Size(620, 500), StartPosition = FormStartPosition.CenterParent, BackColor = Panel, ForeColor = TextMain };
+        var list = new ListBox { Dock = DockStyle.Fill, BackColor = Panel2, ForeColor = TextMain, Font = new Font("Segoe UI", 10F) };
+        void Refresh()
+        {
+            list.Items.Clear();
+            foreach (var task in tasks) list.Items.Add($"{(task.Done ? "✓" : "○")} {task.Title}{(task.DueAt is null ? "" : $"  ·  {task.DueAt:g}")}");
+        }
+        var entry = new TextBox { Dock = DockStyle.Top, PlaceholderText = "New task" };
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 46, FlowDirection = FlowDirection.LeftToRight };
+        var add = CreateButton("Add task", false);
+        add.Click += (_, _) => { if (string.IsNullOrWhiteSpace(entry.Text)) return; tasks.Add(new JarvisTask(Guid.NewGuid(), entry.Text.Trim(), false, null, false)); AssistantData.SaveTasks(tasks); entry.Clear(); Refresh(); };
+        var complete = CreateButton("Complete selected", false);
+        complete.Click += (_, _) => { var index = list.SelectedIndex; if (index < 0 || index >= tasks.Count) return; tasks[index] = tasks[index] with { Done = true }; AssistantData.SaveTasks(tasks); Refresh(); };
+        var remove = CreateButton("Delete selected", false);
+        remove.Click += (_, _) => { var index = list.SelectedIndex; if (index < 0 || index >= tasks.Count) return; if (MessageBox.Show(dialog, "Delete this task?", "Jarvis", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return; tasks.RemoveAt(index); AssistantData.SaveTasks(tasks); Refresh(); };
+        actions.Controls.AddRange(new Control[] { add, complete, remove });
+        dialog.Controls.Add(list);
+        dialog.Controls.Add(entry);
+        dialog.Controls.Add(actions);
+        Refresh();
+        dialog.ShowDialog(this);
+    }
+
+    private void CheckReminders()
+    {
+        var due = tasks.Where(task => !task.Done && !task.Notified && task.DueAt is not null && task.DueAt <= DateTime.Now).ToList();
+        if (due.Count == 0) return;
+        foreach (var task in due)
+        {
+            var index = tasks.FindIndex(item => item.Id == task.Id);
+            tasks[index] = task with { Notified = true };
+            trayIcon.ShowBalloonTip(5000, "Jarvis reminder", task.Title, ToolTipIcon.Info);
+        }
+        AssistantData.SaveTasks(tasks);
+    }
+
     private string ExecuteCommand(string rawCommand)
     {
         var command = rawCommand.Trim();
         var lower = command.ToLowerInvariant();
         try
         {
+            if (lower.StartsWith("add task "))
+            {
+                var title = command[9..].Trim();
+                if (title.Length == 0) return "Tell me what task to add.";
+                tasks.Add(new JarvisTask(Guid.NewGuid(), title, false, null, false));
+                AssistantData.SaveTasks(tasks);
+                return $"Added task: {title}.";
+            }
+            if (lower is "show tasks" or "list tasks")
+            {
+                var pending = tasks.Where(task => !task.Done).Take(10).Select(task => task.Title).ToList();
+                return pending.Count == 0 ? "You have no pending tasks." : "Pending tasks: " + string.Join("; ", pending);
+            }
+            if (lower.StartsWith("complete task "))
+            {
+                var title = command[14..].Trim();
+                var index = tasks.FindIndex(task => !task.Done && task.Title.Equals(title, StringComparison.OrdinalIgnoreCase));
+                if (index < 0) return $"I couldn't find a pending task named {title}.";
+                tasks[index] = tasks[index] with { Done = true };
+                AssistantData.SaveTasks(tasks);
+                return $"Completed task: {tasks[index].Title}.";
+            }
+            var reminder = Regex.Match(command, @"^remind me in (\d+) (minute|minutes|hour|hours) to (.+)$", RegexOptions.IgnoreCase);
+            if (reminder.Success)
+            {
+                if (!int.TryParse(reminder.Groups[1].Value, out var amount) || amount is < 1 or > 10080) return "Choose a reminder from 1 to 10080 minutes or hours.";
+                var due = reminder.Groups[2].Value.StartsWith("hour", StringComparison.OrdinalIgnoreCase) ? DateTime.Now.AddHours(amount) : DateTime.Now.AddMinutes(amount);
+                var title = reminder.Groups[3].Value.Trim();
+                tasks.Add(new JarvisTask(Guid.NewGuid(), title, false, due, false));
+                AssistantData.SaveTasks(tasks);
+                return $"I'll remind you to {title} at {due:g}.";
+            }
             if (lower is "time" or "what time is it" || lower.Contains("current time")) return $"It is {DateTime.Now:h:mm tt}.";
             if (lower is "date" or "what is the date" || lower.Contains("today's date")) return $"Today is {DateTime.Now:dddd, d MMMM yyyy}.";
             if (lower.Contains("system info") || lower.Contains("computer info")) return GetSystemInfo();

@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 namespace Jarvis.Windows;
 
 internal sealed record AssistantTurn(string Role, string Text);
+internal sealed record JarvisTask(Guid Id, string Title, bool Done, DateTime? DueAt, bool Notified);
 
 internal sealed class AssistantSettings
 {
@@ -23,12 +24,15 @@ internal static class AssistantData
     private static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Jarvis");
     private static string SettingsFile => Path.Combine(Folder, "settings.dat");
     private static string HistoryFile => Path.Combine(Folder, "history.dat");
+    private static string TaskFile => Path.Combine(Folder, "tasks.dat");
 
     internal static AssistantSettings LoadSettings() => Read<AssistantSettings>(SettingsFile) ?? new();
     internal static List<AssistantTurn> LoadHistory() => Read<List<AssistantTurn>>(HistoryFile) ?? new();
+    internal static List<JarvisTask> LoadTasks() => Read<List<JarvisTask>>(TaskFile) ?? new();
 
     internal static void SaveSettings(AssistantSettings value) => Write(SettingsFile, value);
     internal static void SaveHistory(List<AssistantTurn> value) => Write(HistoryFile, value.TakeLast(100).ToList());
+    internal static void SaveTasks(List<JarvisTask> value) => Write(TaskFile, value);
     internal static void ClearHistory() { if (File.Exists(HistoryFile)) File.Delete(HistoryFile); }
 
     private static T? Read<T>(string path)

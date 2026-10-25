@@ -23,9 +23,10 @@ internal sealed class WakeWordEngine : IDisposable
     public async Task StartAsync()
     {
         if (!WakeModelStore.Installed) throw new InvalidOperationException("Install the offline model first.");
-        lock (gate) if (phase != "off") return;
+        lock (gate) { if (phase != "off") return; phase = "loading"; }
         StatusChanged?.Invoke("Loading offline model…");
-        model = await Task.Run(() => new Model(WakeModelStore.ModelPath));
+        try { model = await Task.Run(() => new Model(WakeModelStore.ModelPath)); }
+        catch { lock (gate) phase = "off"; throw; }
         lock (gate)
         {
             recognizer = NewWakeRecognizer();
@@ -58,6 +59,7 @@ internal sealed class WakeWordEngine : IDisposable
     {
         string? command = null;
         string? status = null;
+        bool stopAudio = false;
         lock (gate)
         {
             if (phase is not ("wake" or "command") || recognizer is null) return;
@@ -90,8 +92,7 @@ internal sealed class WakeWordEngine : IDisposable
                 {
                     command = text;
                     phase = "answering";
-                    recording = false;
-                    microphone?.StopRecording();
+                    stopAudio = true;
                     status = "Processing your request";
                 }
             }
@@ -100,6 +101,7 @@ internal sealed class WakeWordEngine : IDisposable
                 status = $"Offline voice error: {error.Message}";
             }
         }
+        if (stopAudio) microphone?.StopRecording();
         if (status is not null) StatusChanged?.Invoke(status);
         if (command is not null) CommandHeard?.Invoke(command);
     }
@@ -149,21 +151,23 @@ internal sealed class WakeWordEngine : IDisposable
 
     public void Stop()
     {
+        WaveInEvent? audio;
+        VoskRecognizer? decoder;
+        Model? loaded;
         lock (gate)
         {
             phase = "off";
             resumeWanted = false;
-            try { microphone?.StopRecording(); } catch { }
-            microphone?.Dispose();
-            microphone = null;
-            recognizer?.Dispose();
-            recognizer = null;
-            model?.Dispose();
-            model = null;
             recording = false;
+            audio = microphone; microphone = null;
+            decoder = recognizer; recognizer = null;
+            loaded = model; model = null;
         }
+        try { audio?.StopRecording(); } catch { }
+        audio?.Dispose();
+        decoder?.Dispose();
+        loaded?.Dispose();
         StatusChanged?.Invoke("Hey Jarvis is off");
     }
-
     public void Dispose() => Stop();
 }

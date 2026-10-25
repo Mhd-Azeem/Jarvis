@@ -1,0 +1,71 @@
+name: Build Jarvis Windows
+
+on:
+  push:
+    branches: [ main, az-jarvis-core ]
+    paths:
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jarvis-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Build and verify Windows EXE
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Embed Windows build number
+        shell: pwsh
+        run: |
+          $build = 100000 + [int]$env:GITHUB_RUN_NUMBER
+          @"
+          namespace Jarvis.Windows;
+          internal static class BuildInfo
+          {
+              internal const int ReleaseBuild = $build;
+          }
+          "@ | Set-Content windows/BuildInfo.cs -Encoding utf8
+      - name: Publish standalone Windows EXE
+        shell: pwsh
+        run: |
+          dotnet publish windows/Jarvis.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o windows/publish
+          Copy-Item windows/publish/Jarvis-Windows.exe Jarvis-Windows.exe
+          if ((Get-Item Jarvis-Windows.exe).Length -lt 5000000) { throw 'Windows EXE is unexpectedly small.' }
+      - name: Verify executable starts
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -ArgumentList '--self-test' -PassThru -Wait -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "Jarvis self-test exited with code $($process.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-windows
+          path: Jarvis-Windows.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish Windows preview
+    needs: [windows]
+    if: ${{ needs.windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: jarvis-windows
+          path: release
+      - name: Publish verified EXE
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -s release/Jarvis-Windows.exe
+          build=$((100000 + GITHUB_RUN_NUMBER))
+          gh release create "windows-build-${build}" release/Jarvis-Windows.exe --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Jarvis Windows Preview #${build}" --prerelease --notes "Standalone Windows x64 development preview. The EXE is unsigned and Windows may show a SmartScreen warning. Offline Hey Jarvis requires a user-installed English model and microphone permission; microphone behavior still needs device testing. Android remains available in its separate release."
