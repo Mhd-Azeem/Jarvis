@@ -14,6 +14,7 @@ import android.os.BatteryManager
 
 class JarvisCommandProcessor(private val context: Context) {
 
+    companion object {
     fun supports(rawCommand: String): Boolean {
         val value = rawCommand.trim().lowercase()
         return value.startsWith("open ") ||
@@ -25,6 +26,8 @@ class JarvisCommandProcessor(private val context: Context) {
             value == "play pause" || value == "next track" || value == "previous track" ||
             value == "read notifications" || value in setOf("back", "home", "recents", "notifications", "quick settings", "scroll up", "scroll down") ||
             value.startsWith("tap ") || value.startsWith("type ") || value.startsWith("set alarm ")
+    }
+
     }
 
     fun execute(rawCommand: String): String {

@@ -49,7 +49,7 @@ jobs:
           source .signing/signing.env
           set +a
           export JARVIS_KEYSTORE_PATH="${GITHUB_WORKSPACE}/.signing/jarvis-release.jks"
-          gradle :app:assembleRelease --stacktrace
+          gradle :app:testReleaseUnitTest :app:assembleRelease --stacktrace
       - name: Prepare and verify Android APK
         shell: bash
         run: |

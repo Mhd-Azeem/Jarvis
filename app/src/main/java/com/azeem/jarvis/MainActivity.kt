@@ -198,7 +198,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val request = turns + ChatTurn("user", value)
         turns = request
         saveHistory()
-        if (commands.supports(value)) {
+        if (JarvisCommandProcessor.supports(value)) {
             response = commands.execute(value)
             turns = turns + ChatTurn("assistant", response)
             saveHistory()
