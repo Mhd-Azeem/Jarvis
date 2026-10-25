@@ -9,6 +9,15 @@ import android.os.BatteryManager
 
 class JarvisCommandProcessor(private val context: Context) {
 
+    fun supports(rawCommand: String): Boolean {
+        val value = rawCommand.trim().lowercase()
+        return value.startsWith("open ") ||
+            value.contains("flashlight on") || value.contains("flashlight off") ||
+            value.contains("torch on") || value.contains("torch off") ||
+            value.startsWith("volume ") || value.contains("volume to ") ||
+            value.contains("battery")
+    }
+
     fun execute(rawCommand: String): String {
         val command = rawCommand.trim()
         val lower = command.lowercase()

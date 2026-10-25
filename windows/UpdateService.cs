@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -24,17 +25,17 @@ internal static class UpdateService
             var latestBuild = ParseBuildNumber(tag);
             if (latestBuild <= BuildInfo.ReleaseBuild) return;
 
-            string? downloadUrl = null;
+            string? downloadUrl = null; string? expectedDigest = null;
             foreach (var asset in root.GetProperty("assets").EnumerateArray())
             {
                 if (string.Equals(asset.GetProperty("name").GetString(), WindowsAssetName, StringComparison.OrdinalIgnoreCase))
                 {
-                    downloadUrl = asset.GetProperty("browser_download_url").GetString();
+                    downloadUrl = asset.GetProperty("browser_download_url").GetString(); expectedDigest = asset.TryGetProperty("digest", out var digest) ? digest.GetString() : null;
                     break;
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(downloadUrl)) return;
+            if (string.IsNullOrWhiteSpace(downloadUrl) || string.IsNullOrWhiteSpace(expectedDigest) || !expectedDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) return;
 
             var answer = MessageBox.Show(
                 $"Jarvis Build #{latestBuild} is available.\n\nUpdate now? Jarvis will download the new version, restart itself, and continue automatically.",
@@ -45,7 +46,7 @@ internal static class UpdateService
 
             if (answer != DialogResult.Yes) return;
 
-            await DownloadAndReplaceAsync(client, downloadUrl, latestBuild);
+            await DownloadAndReplaceAsync(client, downloadUrl, expectedDigest, latestBuild);
         }
         catch
         {
@@ -53,7 +54,7 @@ internal static class UpdateService
         }
     }
 
-    private static async Task DownloadAndReplaceAsync(HttpClient client, string downloadUrl, int latestBuild)
+    private static async Task DownloadAndReplaceAsync(HttpClient client, string downloadUrl, string expectedDigest, int latestBuild)
     {
         var currentExe = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
@@ -80,7 +81,8 @@ internal static class UpdateService
             await source.CopyToAsync(destination);
         }
 
-        if (new FileInfo(tempExe).Length < 5_000_000L)
+        var actualDigest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(tempExe)));
+        if (new FileInfo(tempExe).Length < 5_000_000L || !actualDigest.Equals(expectedDigest[7..], StringComparison.OrdinalIgnoreCase))
         {
             try { File.Delete(tempExe); } catch { }
             MessageBox.Show("The downloaded update did not look valid. Jarvis kept the current version.", "Jarvis updater");

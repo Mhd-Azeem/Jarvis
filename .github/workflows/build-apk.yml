@@ -2,10 +2,8 @@ name: Build Jarvis Android + Windows
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, az-jarvis-core ]
   workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * 1,5'
 
 permissions:
   contents: write
@@ -15,68 +13,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  signing-cache-keepalive:
-    name: Keep Android signing cache alive
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Restore signing cache
-        uses: actions/cache@v4
-        with:
-          path: .signing
-          key: jarvis-android-signing-v1
-
   android:
     name: Build Android APK
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
-
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-
-      - name: Restore stable Android signing material
-        id: signing-cache
-        uses: actions/cache@v4
+      - name: Restore existing Android signing material
+        uses: actions/cache/restore@v4
         with:
           path: .signing
           key: jarvis-android-signing-v1
-
-      - name: Create signing material on first updater build
-        if: steps.signing-cache.outputs.cache-hit != 'true'
+      - name: Verify signing continuity
         shell: bash
         run: |
-          mkdir -p .signing
-          SIGNING_PASSWORD="$(openssl rand -hex 24)"
-          printf 'JARVIS_KEYSTORE_PASSWORD=%s\nJARVIS_KEY_PASSWORD=%s\nJARVIS_KEY_ALIAS=jarvis\n' \
-            "$SIGNING_PASSWORD" "$SIGNING_PASSWORD" > .signing/signing.env
-          keytool -genkeypair -v \
-            -keystore .signing/jarvis-release.jks \
-            -storepass "$SIGNING_PASSWORD" \
-            -alias jarvis \
-            -keypass "$SIGNING_PASSWORD" \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname 'CN=Jarvis, OU=Personal, O=Azeem, C=LK'
-
+          test -s .signing/jarvis-release.jks || { echo 'Existing Android signing key is unavailable. Refusing to create an incompatible replacement.'; exit 1; }
+          test -s .signing/signing.env || { echo 'Existing signing credentials are unavailable.'; exit 1; }
       - name: Build signed Android release APK
         shell: bash
         run: |
@@ -85,86 +45,96 @@ jobs:
           set +a
           export JARVIS_KEYSTORE_PATH="${GITHUB_WORKSPACE}/.signing/jarvis-release.jks"
           gradle :app:assembleRelease --stacktrace
-
-      - name: Prepare Android APK
-        run: cp app/build/outputs/apk/release/app-release.apk Jarvis-installable.apk
-
-      - name: Upload Android artifact
-        uses: actions/upload-artifact@v4
+      - name: Prepare and verify Android APK
+        shell: bash
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk Jarvis-Android.apk
+          test -s Jarvis-Android.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs Jarvis-Android.apk
+      - name: Verify update certificate matches latest published APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir previous
+          gh release download --repo "${{ github.repository }}" --pattern '*.apk' --dir previous
+          old_apk="$(find previous -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$old_apk"
+          old_cert="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$old_apk" | awk -F ': ' '/certificate SHA-256 digest/ {print $2; exit}')"
+          new_cert="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs Jarvis-Android.apk | awk -F ': ' '/certificate SHA-256 digest/ {print $2; exit}')"
+          test -n "$old_cert" && test "$old_cert" = "$new_cert"
+      - uses: actions/upload-artifact@v4
         with:
           name: jarvis-android
-          path: Jarvis-installable.apk
+          path: Jarvis-Android.apk
           if-no-files-found: error
 
   windows:
     name: Build Windows EXE
-    continue-on-error: true
-    if: github.event_name != 'schedule'
     runs-on: windows-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-
       - name: Embed release build number
         shell: pwsh
         run: |
           @"
           namespace Jarvis.Windows;
-
           internal static class BuildInfo
           {
               internal const int ReleaseBuild = $env:GITHUB_RUN_NUMBER;
           }
           "@ | Set-Content windows/BuildInfo.cs -Encoding utf8
-
       - name: Publish standalone Windows EXE
         shell: pwsh
         run: |
-          dotnet publish windows/Jarvis.Windows.csproj `
-            -c Release `
-            -r win-x64 `
-            --self-contained true `
-            -p:PublishSingleFile=true `
-            -o windows/publish
+          dotnet publish windows/Jarvis.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o windows/publish
           Copy-Item windows/publish/Jarvis-Windows.exe Jarvis-Windows.exe
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+      - name: Verify Windows executable starts
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) { throw "Jarvis exited during startup with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id
+      - uses: actions/upload-artifact@v4
         with:
           name: jarvis-windows
           path: Jarvis-Windows.exe
           if-no-files-found: error
 
   release:
-    name: Publish Android APK release
+    name: Publish Android release
     needs: [android]
-    if: ${{ github.event_name != 'schedule' && needs.android.result == 'success' }}
+    if: ${{ github.ref == 'refs/heads/main' && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
-
     steps:
-      - name: Download Android APK
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: jarvis-android
           path: release
-
-      - name: Verify release files
-        run: ls -lh release
-
-      - name: Publish Android APK release
+      - name: Publish signed APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" \
-            release/Jarvis-installable.apk \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "Jarvis Build #${{ github.run_number }} — Auto Update" \
-            --notes "Jarvis cross-platform auto-update build from commit ${{ github.sha }}. Android checks GitHub Releases and downloads newer APKs in-app; Android still requires the normal system Update confirmation. Windows checks GitHub Releases on startup and can replace/relaunch its EXE automatically after confirmation. The Windows executable is currently unsigned, so SmartScreen may show Unknown publisher."
+          test -s release/Jarvis-Android.apk
+          gh release create "build-${{ github.run_number }}" release/Jarvis-Android.apk --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Jarvis Build #${{ github.run_number }}" --notes "Android APK signed with the existing Jarvis update key. Android installation requires system confirmation. Windows is attached separately when its build passes."
+
+  release-windows:
+    name: Attach verified Windows EXE
+    needs: [windows, release]
+    if: ${{ always() && needs.windows.result == 'success' && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: jarvis-windows
+          path: release
+      - name: Attach Windows EXE
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -s release/Jarvis-Windows.exe
+          gh release upload "build-${{ github.run_number }}" release/Jarvis-Windows.exe --repo "${{ github.repository }}" --clobber

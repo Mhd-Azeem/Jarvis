@@ -8,7 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -16,11 +15,10 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,14 +34,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,461 +57,427 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.azeem.jarvis.core.AiClient
+import com.azeem.jarvis.core.ChatTurn
 import com.azeem.jarvis.core.JarvisCommandProcessor
+import com.azeem.jarvis.core.SecureStore
 import com.azeem.jarvis.update.UpdateManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
-private val JarvisCyan = Color(0xFF53E9FF)
-private val JarvisBlue = Color(0xFF4A7DFF)
-private val JarvisPurple = Color(0xFF8D63FF)
-private val JarvisBg = Color(0xFF060A12)
-private val JarvisPanel = Color(0xC9141C2A)
-private val JarvisPanelSoft = Color(0x99172232)
-private val JarvisText = Color(0xFFF2F7FF)
-private val JarvisMuted = Color(0xFF90A0B8)
+private val Purple = Color(0xFFB45AFF)
+private val Pink = Color(0xFFF457D5)
+private val Background = Color(0xFF080413)
+private val Panel = Color(0xCC1A0D2D)
+private val TextColor = Color(0xFFF7EDFF)
+private val Dim = Color(0xFFAB97C0)
+private val Glow = Brush.linearGradient(listOf(Purple, Pink))
+
+private enum class Page { Welcome, Home, Chat, Voice, History, Settings }
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
-
-    private lateinit var commandProcessor: JarvisCommandProcessor
-    private lateinit var updateManager: UpdateManager
+    private lateinit var commands: JarvisCommandProcessor
+    private lateinit var secure: SecureStore
+    private lateinit var updates: UpdateManager
     private var tts: TextToSpeech? = null
-    private var updateStatus by mutableStateOf("Checking GitHub for updates…")
-    private var pendingUpdate by mutableStateOf<UpdateManager.AvailableUpdate?>(null)
-    private var updateBusy by mutableStateOf(false)
+
+    private var page by mutableStateOf(Page.Home)
+    private var prompt by mutableStateOf("")
+    private var response by mutableStateOf("Ready when you are.")
+    private var turns by mutableStateOf<List<ChatTurn>>(emptyList())
+    private var busy by mutableStateOf(false)
+    private var listening by mutableStateOf(false)
+    private var apiKey by mutableStateOf("")
+    private var endpoint by mutableStateOf("https://api.openai.com/v1/chat/completions")
+    private var model by mutableStateOf("gpt-4o-mini")
+    private var speakReplies by mutableStateOf(true)
+    private var updateStatus by mutableStateOf("Tap to check for updates")
+    private var availableUpdate by mutableStateOf<UpdateManager.AvailableUpdate?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        commandProcessor = JarvisCommandProcessor(applicationContext)
-        updateManager = UpdateManager(this)
+        commands = JarvisCommandProcessor(applicationContext)
+        secure = SecureStore(applicationContext)
+        updates = UpdateManager(this)
         tts = TextToSpeech(this, this)
+        apiKey = secure.get("api_key").orEmpty()
+        endpoint = secure.get("endpoint") ?: endpoint
+        model = secure.get("model") ?: model
+        speakReplies = secure.get("speak") != "false"
+        turns = readHistory()
+        page = if (secure.get("onboarded") == "yes") Page.Home else Page.Welcome
 
         setContent {
-            var command by mutableStateOf("")
-            var response by mutableStateOf("Systems online. Ready for your command.")
-            var isListening by mutableStateOf(false)
-
-            val speechLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.StartActivityForResult()
-            ) { result ->
-                isListening = false
-                val heard = result.data
-                    ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                    ?.firstOrNull()
-                if (!heard.isNullOrBlank()) {
-                    command = heard
-                    response = runCommand(heard)
+            val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                listening = false
+                val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+                if (heard.isNullOrBlank()) {
+                    response = "I didn't catch that. Tap the microphone to try again."
                 } else {
-                    response = "I didn't catch that. Try speaking again."
+                    prompt = heard
+                    submit(heard)
                 }
             }
-
-            val colorScheme = darkColorScheme(
-                primary = JarvisCyan,
-                secondary = JarvisBlue,
-                tertiary = JarvisPurple,
-                background = JarvisBg,
-                surface = JarvisPanel,
-                onPrimary = Color(0xFF001014),
-                onBackground = JarvisText,
-                onSurface = JarvisText
-            )
-
-            MaterialTheme(colorScheme = colorScheme) {
-                Surface(modifier = Modifier.fillMaxSize(), color = JarvisBg) {
-                    JarvisDashboard(
-                        command = command,
-                        onCommandChange = { command = it },
-                        response = response,
-                        isListening = isListening,
-                        updateStatus = updateStatus,
-                        updateAvailable = pendingUpdate != null,
-                        updateBusy = updateBusy,
-                        onRun = { response = runCommand(command) },
-                        onListen = {
-                            isListening = true
-                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Purple, secondary = Pink, background = Background, surface = Panel, onBackground = TextColor, onSurface = TextColor)) {
+                JarvisApp(
+                    page = page,
+                    onPage = { page = it },
+                    prompt = prompt,
+                    onPrompt = { prompt = it },
+                    response = response,
+                    turns = turns,
+                    busy = busy,
+                    listening = listening,
+                    connected = apiKey.isNotBlank(),
+                    endpoint = endpoint,
+                    onEndpoint = { endpoint = it; secure.put("endpoint", it) },
+                    model = model,
+                    onModel = { model = it; secure.put("model", it) },
+                    apiKey = apiKey,
+                    onApiKey = { apiKey = it; secure.put("api_key", it) },
+                    speakReplies = speakReplies,
+                    onSpeakReplies = { speakReplies = it; secure.put("speak", it.toString()) },
+                    updateStatus = updateStatus,
+                    onStart = { secure.put("onboarded", "yes"); page = Page.Home },
+                    onSubmit = { submit(prompt) },
+                    onListen = {
+                        listening = true
+                        page = Page.Voice
+                        try {
+                            launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Jarvis")
-                            }
-                            speechLauncher.launch(intent)
-                        },
-                        onQuickCommand = { quick ->
-                            command = quick
-                            response = runCommand(quick)
-                        },
-                        onCheckUpdate = ::checkForUpdates,
-                        onInstallUpdate = ::installPendingUpdate
-                    )
-                }
+                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak with Jarvis")
+                            })
+                        } catch (_: Exception) {
+                            listening = false
+                            response = "No speech recognition service is available on this device."
+                        }
+                    },
+                    onQuick = { submit(it) },
+                    onClearHistory = { turns = emptyList(); secure.remove("history") },
+                    onCheckUpdate = ::checkUpdate,
+                    onInstallUpdate = ::installUpdate
+                )
             }
         }
+    }
 
-        checkForUpdates()
+    private fun submit(input: String) {
+        val value = input.trim()
+        if (value.isEmpty() || busy) return
+        prompt = ""
+        response = ""
+        val request = turns + ChatTurn("user", value)
+        turns = request
+        saveHistory()
+        if (commands.supports(value)) {
+            response = commands.execute(value)
+            turns = turns + ChatTurn("assistant", response)
+            saveHistory()
+            speak(response)
+            return
+        }
+        if (apiKey.isBlank()) {
+            response = "This needs an AI provider. Add an API key in Settings. Device commands work offline."
+            turns = turns + ChatTurn("assistant", response)
+            saveHistory()
+            return
+        }
+        busy = true
+        lifecycleScope.launch {
+            try {
+                val answer = AiClient().reply(endpoint, apiKey, model, request) { chunk ->
+                    withContext(Dispatchers.Main) { response = chunk }
+                }
+                response = answer
+                turns = turns + ChatTurn("assistant", answer)
+                saveHistory()
+                speak(answer)
+            } catch (error: Exception) {
+                response = error.message ?: "The provider request failed."
+                turns = turns + ChatTurn("assistant", response)
+                saveHistory()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private fun readHistory(): List<ChatTurn> = runCatching {
+        val json = JSONArray(secure.get("history") ?: "[]")
+        (0 until json.length()).map { index ->
+            val turn = json.getJSONObject(index)
+            ChatTurn(turn.getString("role"), turn.getString("text"))
+        }
+    }.getOrDefault(emptyList())
+
+    private fun saveHistory() {
+        val array = JSONArray()
+        turns.takeLast(100).forEach { array.put(JSONObject().put("role", it.role).put("text", it.text)) }
+        secure.put("history", array.toString())
+    }
+
+    private fun speak(value: String) {
+        if (speakReplies) tts?.speak(value, TextToSpeech.QUEUE_FLUSH, null, "jarvis-reply")
+    }
+
+    private fun checkUpdate() {
+        if (busy) return
+        busy = true
+        updateStatus = "Checking GitHub…"
+        lifecycleScope.launch {
+            when (val result = updates.checkForUpdate()) {
+                is UpdateManager.CheckResult.Available -> {
+                    availableUpdate = result.update
+                    updateStatus = "Build #${result.update.buildNumber} is available. Tap Install."
+                }
+                is UpdateManager.CheckResult.Current -> updateStatus = "You have the latest release."
+                is UpdateManager.CheckResult.Error -> updateStatus = result.message
+            }
+            busy = false
+        }
+    }
+
+    private fun installUpdate() {
+        val update = availableUpdate ?: return
+        if (busy) return
+        busy = true
+        lifecycleScope.launch {
+            updateStatus = updates.downloadAndInstall(update)
+            busy = false
+        }
     }
 
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.getDefault()
-            tts?.setSpeechRate(0.95f)
-        }
+        if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault()
     }
 
     override fun onDestroy() {
-        tts?.stop()
         tts?.shutdown()
         super.onDestroy()
     }
-
-    private fun runCommand(command: String): String {
-        val result = commandProcessor.execute(command)
-        tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "jarvis-response")
-        return result
-    }
-
-    private fun checkForUpdates() {
-        if (updateBusy) return
-        updateBusy = true
-        updateStatus = "Checking GitHub for updates…"
-        lifecycleScope.launch {
-            when (val result = updateManager.checkForUpdate()) {
-                is UpdateManager.CheckResult.Available -> {
-                    pendingUpdate = result.update
-                    updateStatus = "Build #${result.update.buildNumber} is ready to install."
-                }
-                is UpdateManager.CheckResult.Current -> {
-                    pendingUpdate = null
-                    updateStatus = "You're running the latest Jarvis build."
-                }
-                is UpdateManager.CheckResult.Error -> updateStatus = result.message
-            }
-            updateBusy = false
-        }
-    }
-
-    private fun installPendingUpdate() {
-        val update = pendingUpdate ?: run {
-            checkForUpdates()
-            return
-        }
-        if (updateBusy) return
-        updateBusy = true
-        updateStatus = "Downloading Build #${update.buildNumber}…"
-        lifecycleScope.launch {
-            updateStatus = updateManager.downloadAndInstall(update)
-            updateBusy = false
-        }
-    }
 }
 
 @Composable
-private fun JarvisDashboard(
-    command: String,
-    onCommandChange: (String) -> Unit,
+private fun JarvisApp(
+    page: Page,
+    onPage: (Page) -> Unit,
+    prompt: String,
+    onPrompt: (String) -> Unit,
     response: String,
-    isListening: Boolean,
+    turns: List<ChatTurn>,
+    busy: Boolean,
+    listening: Boolean,
+    connected: Boolean,
+    endpoint: String,
+    onEndpoint: (String) -> Unit,
+    model: String,
+    onModel: (String) -> Unit,
+    apiKey: String,
+    onApiKey: (String) -> Unit,
+    speakReplies: Boolean,
+    onSpeakReplies: (Boolean) -> Unit,
     updateStatus: String,
-    updateAvailable: Boolean,
-    updateBusy: Boolean,
-    onRun: () -> Unit,
+    onStart: () -> Unit,
+    onSubmit: () -> Unit,
     onListen: () -> Unit,
-    onQuickCommand: (String) -> Unit,
+    onQuick: (String) -> Unit,
+    onClearHistory: () -> Unit,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF030916), Color(0xFF0B1B35), Color(0xFF030916))
-                )
-            )
-    ) {
+    Scaffold(
+        containerColor = Background,
+        bottomBar = {
+            if (page != Page.Welcome) {
+                Row(
+                    Modifier.fillMaxWidth().background(Color(0xFF160923)).padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    listOf(Page.Home, Page.Chat, Page.Voice, Page.History, Page.Settings).forEach { item ->
+                        Text(
+                            item.name,
+                            color = if (item == page) Purple else Dim,
+                            fontSize = 11.sp,
+                            modifier = Modifier.clickable { onPage(item) }.padding(8.dp)
+                        )
+                    }
+                }
+            }
+        }
+    ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
+            Modifier.fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color(0xFF16062B), Background, Color(0xFF0B061B))))
+                .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            HeaderRow()
-            JarvisCore(isListening = isListening)
-
-            Text(
-                text = if (isListening) "LISTENING…" else "HOW CAN I HELP YOU?",
-                modifier = Modifier.fillMaxWidth(),
-                color = if (isListening) JarvisCyan else JarvisText,
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
-                textAlign = TextAlign.Center,
-                letterSpacing = 1.4.sp
-            )
-            Text(
-                text = if (isListening) "Speak naturally. Jarvis is listening." else "Type a command or use a quick action below.",
-                modifier = Modifier.fillMaxWidth(),
-                color = JarvisMuted,
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center
-            )
-
-            GlassCard {
-                OutlinedTextField(
-                    value = command,
-                    onValueChange = onCommandChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Command") },
-                    placeholder = { Text("Open YouTube, battery, volume 40…") },
-                    minLines = 2,
-                    maxLines = 4,
-                    shape = RoundedCornerShape(18.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = JarvisCyan,
-                        unfocusedBorderColor = Color(0xFF2C3B50),
-                        focusedLabelColor = JarvisCyan,
-                        cursorColor = JarvisCyan,
-                        focusedTextColor = JarvisText,
-                        unfocusedTextColor = JarvisText,
-                        focusedContainerColor = Color(0x66101825),
-                        unfocusedContainerColor = Color(0x55101825)
-                    )
-                )
-
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onListen,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, if (isListening) JarvisCyan else Color(0xFF36516C)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = JarvisCyan)
-                    ) {
-                        Text(if (isListening) "● Listening" else "◉ Speak", fontWeight = FontWeight.SemiBold)
-                    }
-                    Button(
-                        onClick = onRun,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = Color(0xFF001014))
-                    ) {
-                        Text("Execute  ›", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Text("DEVICE SHORTCUTS", color = JarvisMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-            QuickActions(onQuickCommand)
-
-            GlassCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(JarvisCyan)
-                    )
-                    Spacer(Modifier.size(10.dp))
-                    Text("ASSISTANT RESPONSE", color = JarvisCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text(response, color = JarvisText, fontSize = 16.sp, lineHeight = 23.sp)
-            }
-
-            GlassCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("APP UPDATES", color = JarvisMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
-                        Spacer(Modifier.height(5.dp))
-                        Text(updateStatus, color = JarvisText, fontSize = 14.sp)
-                    }
-                    Spacer(Modifier.size(10.dp))
-                    Text("#${BuildConfig.VERSION_CODE}", color = JarvisCyan, fontWeight = FontWeight.Bold)
-                }
-                AnimatedVisibility(updateBusy) {
+            if (page == Page.Welcome) {
+                Spacer(Modifier.height(30.dp))
+                Vortex("✦", false)
+                Text("Meet Jarvis", color = TextColor, fontSize = 36.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                Text("Your voice, your device, your assistant.", color = Dim, fontSize = 16.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                Text("Device commands work offline. Connect an AI provider when you want cloud conversations.", color = Dim, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Button(onClick = onStart, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Purple)) { Text("Get started") }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = JarvisCyan,
-                            trackColor = Color(0xFF1B2A3C)
-                        )
+                        Text("JARVIS", color = TextColor, fontSize = 27.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
+                        Text("YOUR PERSONAL ASSISTANT", color = Dim, fontSize = 10.sp)
                     }
+                    Text(if (connected) "● AI READY" else "○ LOCAL", color = if (connected) Pink else Dim, fontSize = 11.sp)
                 }
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = onCheckUpdate,
-                        enabled = !updateBusy,
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = JarvisCyan)
-                    ) { Text("Check update") }
-                    if (updateAvailable) {
-                        Button(
-                            onClick = onInstallUpdate,
-                            enabled = !updateBusy,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = JarvisCyan, contentColor = Color(0xFF001014))
-                        ) { Text("Install", fontWeight = FontWeight.Bold) }
+                when (page) {
+                    Page.Home -> {
+                        Text("Good day, Azeem", color = TextColor, fontSize = 27.sp, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            FeatureCard("✦", "Chat with Jarvis", Modifier.weight(1f)) { onPage(Page.Chat) }
+                            FeatureCard("♩", "Speak with Jarvis", Modifier.weight(1f), onListen)
+                        }
+                        Text("QUICK ACTIONS", color = Dim, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Action("Battery", Modifier.weight(1f)) { onQuick("battery") }
+                            Action("Torch", Modifier.weight(1f)) { onQuick("flashlight on") }
+                            Action("Volume", Modifier.weight(1f)) { onQuick("volume 40") }
+                        }
+                        Text("RECENT ACTIVITY", color = Dim, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Glass {
+                            if (turns.isEmpty()) Text("No conversations yet.", color = Dim)
+                            turns.takeLast(4).reversed().forEach {
+                                Text("${if (it.role == "user") "You" else "Jarvis"}: ${it.text}", color = TextColor, fontSize = 13.sp, maxLines = 2, modifier = Modifier.padding(vertical = 5.dp))
+                            }
+                        }
+                        if (response.isNotEmpty()) Glass { Text(response, color = TextColor) }
                     }
+                    Page.Chat -> {
+                        Text("Chat with Jarvis", color = TextColor, fontSize = 27.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (connected) "Cloud AI connected when you send a message" else "Local commands available. Configure a provider for AI chat.", color = Dim, fontSize = 13.sp)
+                        turns.takeLast(20).forEach { turn ->
+                            Glass {
+                                Text(if (turn.role == "user") "YOU" else "JARVIS", color = if (turn.role == "user") Pink else Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(turn.text, color = TextColor, modifier = Modifier.padding(top = 6.dp))
+                            }
+                        }
+                        if (busy) Text("Jarvis is responding…", color = Purple)
+                        ChatInput(prompt, onPrompt, onSubmit, onListen, busy)
+                    }
+                    Page.Voice -> {
+                        Spacer(Modifier.height(25.dp))
+                        Vortex("♩", listening)
+                        Text(if (listening) "Listening…" else "Speak with Jarvis", color = TextColor, fontSize = 27.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                        Text(if (listening) "Speak naturally" else "Tap the microphone to speak", color = Dim, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                        Button(onClick = onListen, modifier = Modifier.align(Alignment.CenterHorizontally), colors = ButtonDefaults.buttonColors(containerColor = Purple)) { Text("🎙  Start listening") }
+                        Glass { Text(response, color = TextColor) }
+                    }
+                    Page.History -> {
+                        Text("Conversation history", color = TextColor, fontSize = 27.sp)
+                        Text("Stored encrypted on this device.", color = Dim)
+                        OutlinedButton(onClick = onClearHistory) { Text("Clear history") }
+                        turns.reversed().forEach { turn ->
+                            Glass {
+                                Text(if (turn.role == "user") "YOU" else "JARVIS", color = Pink, fontSize = 11.sp)
+                                Text(turn.text, color = TextColor)
+                            }
+                        }
+                    }
+                    Page.Settings -> {
+                        Text("Settings", color = TextColor, fontSize = 27.sp)
+                        Glass {
+                            Text("AI PROVIDER", color = Pink, fontWeight = FontWeight.Bold)
+                            Text("Requests are sent to this provider only when you submit a chat message.", color = Dim, fontSize = 12.sp)
+                            Field("HTTPS chat endpoint", endpoint, onEndpoint)
+                            Field("Model", model, onModel)
+                            Field("API key (stored encrypted)", apiKey, onApiKey)
+                            Text(if (connected) "● Key configured" else "○ No provider key configured", color = if (connected) Pink else Dim)
+                        }
+                        Glass {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Speak responses", color = TextColor)
+                                Switch(checked = speakReplies, onCheckedChange = onSpeakReplies)
+                            }
+                            Text("Wake-word listening: not available in this build", color = Dim, fontSize = 12.sp)
+                            Text("Microphone starts only when you tap Speak. Speech recognition may use your device's configured service.", color = Dim, fontSize = 12.sp)
+                        }
+                        Glass {
+                            Text("APP UPDATE", color = Pink, fontWeight = FontWeight.Bold)
+                            Text(updateStatus, color = TextColor, fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = onCheckUpdate) { Text("Check") }
+                                if (updateStatus.contains("available")) Button(onClick = onInstallUpdate) { Text("Install") }
+                            }
+                        }
+                    }
+                    Page.Welcome -> Unit
                 }
-            }
-
-            Text(
-                text = "Compatibility mode • Standard Android controls • Auto-update enabled",
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                color = Color(0xFF617086),
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
-private fun HeaderRow() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
-            Text("JARVIS", color = JarvisText, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
-            Text("YOUR AI COMPANION", color = JarvisMuted, fontSize = 10.sp, letterSpacing = 1.7.sp)
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(Color(0x3317D7A0))
-                .border(1.dp, Color(0x5529E7B0), RoundedCornerShape(50))
-                .padding(horizontal = 11.dp, vertical = 7.dp)
-        ) {
-            Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF35F0B1)))
-            Spacer(Modifier.size(7.dp))
-            Text("READY", color = Color(0xFF67F4C7), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
-private fun JarvisCore(isListening: Boolean) {
-    val transition = rememberInfiniteTransition(label = "jarvis-core")
-    val pulse by transition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(if (isListening) 650 else 1600), RepeatMode.Reverse),
-        label = "pulse"
-    )
-    val glowAlpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.85f,
-        animationSpec = infiniteRepeatable(tween(if (isListening) 500 else 1400), RepeatMode.Reverse),
-        label = "glow"
-    )
-
-    Box(
-        modifier = Modifier.fillMaxWidth().height(190.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(164.dp)
-                .graphicsLayer(scaleX = pulse, scaleY = pulse, alpha = glowAlpha)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(Color(0x8853E9FF), Color(0x224A7DFF), Color.Transparent)
-                    )
-                )
-        )
-        Box(
-            modifier = Modifier
-                .size(132.dp)
-                .clip(CircleShape)
-                .border(2.dp, Color(0xAA53E9FF), CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(Color(0xFF0A2D3B), Color(0xFF0A1424), Color(0xFF070A12))
-                    )
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(84.dp)
-                    .clip(CircleShape)
-                    .border(1.dp, Color(0xFF6AF1FF), CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(Color(0xFF7AF4FF), Color(0xFF247F9D), Color(0xFF092535))
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(if (isListening) "●" else "✦", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
             }
         }
     }
 }
 
 @Composable
-private fun QuickActions(onQuickCommand: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            QuickAction("▶", "YouTube", "open YouTube", Modifier.weight(1f), onQuickCommand)
-            QuickAction("▣", "Battery", "battery", Modifier.weight(1f), onQuickCommand)
-            QuickAction("☼", "Flashlight", "flashlight on", Modifier.weight(1f), onQuickCommand)
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            QuickAction("◐", "Volume 40", "volume 40", Modifier.weight(1f), onQuickCommand)
-            QuickAction("⚙", "Settings", "open settings", Modifier.weight(1f), onQuickCommand)
-            QuickAction("⌁", "Bluetooth", "Bluetooth settings", Modifier.weight(1f), onQuickCommand)
+private fun Field(label: String, value: String, changed: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = changed,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        singleLine = true,
+        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple, unfocusedBorderColor = Color(0xFF5A3A76), focusedTextColor = TextColor, unfocusedTextColor = TextColor)
+    )
+}
+
+@Composable
+private fun ChatInput(prompt: String, onPrompt: (String) -> Unit, onSubmit: () -> Unit, onListen: () -> Unit, busy: Boolean) {
+    Glass {
+        Field("Ask Jarvis or enter a device command", prompt, onPrompt)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 10.dp)) {
+            OutlinedButton(onClick = onListen, modifier = Modifier.weight(1f)) { Text("Speak") }
+            Button(onClick = onSubmit, enabled = !busy, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Purple)) { Text("Send") }
         }
     }
 }
 
 @Composable
-private fun QuickAction(
-    symbol: String,
-    label: String,
-    command: String,
-    modifier: Modifier,
-    onQuickCommand: (String) -> Unit
-) {
-    OutlinedButton(
-        onClick = { onQuickCommand(command) },
-        modifier = modifier.height(68.dp),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, Color(0xFF253A50)),
-        colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = Color(0x66111B29),
-            contentColor = JarvisText
-        ),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 7.dp)
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(symbol, color = JarvisCyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(label, color = JarvisText, fontSize = 10.sp, maxLines = 1)
+private fun FeatureCard(symbol: String, title: String, modifier: Modifier, action: () -> Unit) {
+    Card(onClick = action, modifier = modifier.height(180.dp), shape = RoundedCornerShape(28.dp), border = BorderStroke(1.dp, Color(0xFF6E368A)), colors = CardDefaults.cardColors(containerColor = Panel)) {
+        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(90.dp).clip(RoundedCornerShape(22.dp)).background(Brush.radialGradient(listOf(Color(0xFF6832A4), Color(0xFF210F38)))), contentAlignment = Alignment.Center) {
+                Text(symbol, color = TextColor, fontSize = 36.sp)
+            }
+            Text(title, color = TextColor, textAlign = TextAlign.Center, fontSize = 14.sp)
         }
     }
 }
 
 @Composable
-private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(1.dp, Color(0xFF1E344A)),
-        colors = CardDefaults.cardColors(containerColor = JarvisPanelSoft)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), content = content)
+private fun Action(text: String, modifier: Modifier, action: () -> Unit) {
+    OutlinedButton(onClick = action, modifier = modifier, border = BorderStroke(1.dp, Purple), contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text(text, fontSize = 11.sp) }
+}
+
+@Composable
+private fun Glass(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, Color(0xFF593474)), colors = CardDefaults.cardColors(containerColor = Panel)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp), content = content)
+    }
+}
+
+@Composable
+private fun Vortex(symbol: String, listening: Boolean) {
+    val transition = rememberInfiniteTransition(label = "vortex")
+    val scale by transition.animateFloat(0.94f, 1.06f, infiniteRepeatable(tween(if (listening) 600 else 1800), RepeatMode.Reverse), label = "pulse")
+    Box(Modifier.fillMaxWidth().height(290.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(270.dp).graphicsLayer(scaleX = scale, scaleY = scale).clip(CircleShape).background(Brush.radialGradient(listOf(Color(0x996F24C7), Color(0x5534137A), Color.Transparent))))
+        Box(Modifier.size(220.dp).clip(CircleShape).background(Brush.sweepGradient(listOf(Purple, Pink, Color(0xFF3422BB), Purple))).padding(3.dp).clip(CircleShape).background(Background), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(178.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Color(0xFF61209E), Color(0xFF1C0739), Background))), contentAlignment = Alignment.Center) {
+                Text(symbol, color = TextColor, fontSize = 88.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }

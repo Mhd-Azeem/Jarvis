@@ -32,6 +32,11 @@ internal sealed class ModernJarvisForm : Form
     private readonly Button listenButton = new();
     private readonly Label listeningLabel = new();
     private readonly ArcReactorControl reactor = new();
+    private AssistantSettings assistantSettings = AssistantData.LoadSettings();
+    private readonly List<AssistantTurn> history = AssistantData.LoadHistory();
+    private CancellationTokenSource? pendingRequest;
+    private readonly NotifyIcon trayIcon = new();
+    private bool exitRequested;
 
     private const byte VkVolumeMute = 0xAD;
     private const byte VkVolumeDown = 0xAE;
@@ -83,8 +88,36 @@ internal sealed class ModernJarvisForm : Form
         Controls.Add(shell);
 
         AcceptButton = runButton;
+        var trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("Open Jarvis", null, (_, _) => RestoreFromTray());
+        trayMenu.Items.Add("Exit Jarvis", null, (_, _) => { exitRequested = true; Close(); });
+        trayIcon.Icon = SystemIcons.Application;
+        trayIcon.Text = "Jarvis Assistant";
+        trayIcon.ContextMenuStrip = trayMenu;
+        trayIcon.Visible = true;
+        trayIcon.DoubleClick += (_, _) => RestoreFromTray();
+        Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) Hide(); };
     }
 
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!exitRequested && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
+        trayIcon.Visible = false;
+        trayIcon.Dispose();
+        base.OnFormClosing(e);
+    }
     private Control BuildSidebar()
     {
         var sidebar = CreateCardPanel();
@@ -148,6 +181,21 @@ internal sealed class ModernJarvisForm : Form
         updateButton.Margin = new Padding(0, 14, 0, 0);
         updateButton.Click += async (_, _) => await UpdateService.CheckAndOfferUpdateAsync();
         content.Controls.Add(updateButton);
+        var settingsButton = CreateButton("AI provider settings", false);
+        settingsButton.Width = 230;
+        settingsButton.Margin = new Padding(0, 8, 0, 0);
+        settingsButton.Click += (_, _) => ShowProviderSettings();
+        content.Controls.Add(settingsButton);
+        var historyButton = CreateButton("Conversation history", false);
+        historyButton.Width = 230;
+        historyButton.Margin = new Padding(0, 8, 0, 0);
+        historyButton.Click += (_, _) => ShowHistory();
+        content.Controls.Add(historyButton);
+        var cancelButton = CreateButton("Cancel AI response", false);
+        cancelButton.Width = 230;
+        cancelButton.Margin = new Padding(0, 8, 0, 0);
+        cancelButton.Click += (_, _) => pendingRequest?.Cancel();
+        content.Controls.Add(cancelButton);
 
         sidebar.Controls.Add(content);
         return sidebar;
@@ -411,10 +459,10 @@ internal sealed class ModernJarvisForm : Form
         runButton.Enabled = false;
         try
         {
-            var result = ExecuteCommand(command);
+            var result = await ExecuteWithCloudAsync(command);
             SetResponse(result);
-            _ = SpeakAsync(result);
-            await Task.CompletedTask;
+            if (assistantSettings.SpeakReplies) _ = SpeakAsync(result);
+
         }
         finally
         {
@@ -439,9 +487,9 @@ internal sealed class ModernJarvisForm : Form
             }
 
             commandBox.Text = heard;
-            var result = ExecuteCommand(heard);
+            var result = await ExecuteWithCloudAsync(heard);
             SetResponse(result);
-            _ = SpeakAsync(result);
+            if (assistantSettings.SpeakReplies) _ = SpeakAsync(result);
         }
         finally
         {
@@ -452,6 +500,78 @@ internal sealed class ModernJarvisForm : Form
         }
     }
 
+    private async Task<string> ExecuteWithCloudAsync(string command)
+    {
+        var local = ExecuteCommand(command);
+        history.Add(new AssistantTurn("user", command));
+        string result;
+        if (local.StartsWith("I don't know that command yet.", StringComparison.Ordinal))
+        {
+            pendingRequest = new CancellationTokenSource();
+            try
+            {
+                SetResponse("Contacting AI provider…");
+                result = await AssistantCloud.ReplyAsync(assistantSettings, history,
+                    partial => { if (IsHandleCreated) BeginInvoke((Action)(() => SetResponse(partial))); },
+                    pendingRequest.Token);
+            }
+            catch (OperationCanceledException) { result = "AI response cancelled."; }
+            catch (Exception ex) { result = $"Provider request failed: {ex.Message}"; }
+            finally { pendingRequest.Dispose(); pendingRequest = null; }
+        }
+        else result = local;
+        history.Add(new AssistantTurn("assistant", result));
+        AssistantData.SaveHistory(history);
+        return result;
+    }
+
+    private void ShowProviderSettings()
+    {
+        using var dialog = new Form {
+            Text = "Jarvis AI provider", Size = new Size(560, 380),
+            StartPosition = FormStartPosition.CenterParent, BackColor = Panel, ForeColor = TextMain,
+            FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false
+        };
+        var endpointBox = new TextBox { Text = assistantSettings.Endpoint, Width = 490 };
+        var modelBox = new TextBox { Text = assistantSettings.Model, Width = 490 };
+        var keyBox = new TextBox { Text = assistantSettings.ApiKey, Width = 490, UseSystemPasswordChar = true };
+        var speakBox = new CheckBox { Text = "Speak responses", Checked = assistantSettings.SpeakReplies, AutoSize = true, ForeColor = TextMain };
+        var save = new Button { Text = "Save settings", Width = 150, DialogResult = DialogResult.OK };
+        var stack = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(20), AutoScroll = true };
+        foreach (var pair in new[] { ("HTTPS chat endpoint", endpointBox), ("Model", modelBox), ("API key, encrypted for this Windows user", keyBox) })
+        {
+            stack.Controls.Add(new Label { Text = pair.Item1, Width = 490, Height = 24, ForeColor = Muted });
+            stack.Controls.Add(pair.Item2);
+        }
+        stack.Controls.Add(speakBox);
+        stack.Controls.Add(new Label { Text = "Audio is handled by Windows speech services. Only typed or recognized text is sent to the configured provider.", Width = 490, Height = 42, ForeColor = Muted });
+        stack.Controls.Add(save);
+        dialog.Controls.Add(stack);
+        dialog.AcceptButton = save;
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (!Uri.TryCreate(endpointBox.Text.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            MessageBox.Show(this, "The provider endpoint must use HTTPS.", "Jarvis settings");
+            return;
+        }
+        assistantSettings = new AssistantSettings { Endpoint = endpointBox.Text.Trim(), Model = modelBox.Text.Trim(), ApiKey = keyBox.Text.Trim(), SpeakReplies = speakBox.Checked };
+        AssistantData.SaveSettings(assistantSettings);
+        SetResponse(assistantSettings.ApiKey.Length == 0 ? "Local commands ready. No AI provider key configured." : "AI provider settings saved.");
+    }
+
+    private void ShowHistory()
+    {
+        using var dialog = new Form { Text = "Jarvis conversation history", Size = new Size(660, 520), StartPosition = FormStartPosition.CenterParent, BackColor = Panel, ForeColor = TextMain };
+        var display = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = Panel, ForeColor = TextMain, Text = string.Join(Environment.NewLine + Environment.NewLine, history.Select(turn => $"{turn.Role.ToUpperInvariant()}: {turn.Text}")) };
+        var clear = new Button { Text = "Clear history", Dock = DockStyle.Bottom, Height = 40 };
+        clear.Click += (_, _) => {
+            if (MessageBox.Show(dialog, "Delete local conversation history?", "Jarvis", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            history.Clear(); AssistantData.ClearHistory(); display.Clear();
+        };
+        dialog.Controls.Add(display);
+        dialog.Controls.Add(clear);
+        dialog.ShowDialog(this);
+    }
     private string ExecuteCommand(string rawCommand)
     {
         var command = rawCommand.Trim();

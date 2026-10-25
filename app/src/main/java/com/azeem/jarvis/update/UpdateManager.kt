@@ -12,13 +12,15 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 class UpdateManager(private val activity: Activity) {
 
     data class AvailableUpdate(
         val buildNumber: Int,
         val tag: String,
-        val downloadUrl: String
+        val downloadUrl: String,
+        val sha256: String
     )
 
     sealed interface CheckResult {
@@ -62,17 +64,19 @@ class UpdateManager(private val activity: Activity) {
 
             val assets = json.optJSONArray("assets")
             var apkUrl: String? = null
+            var apkDigest: String? = null
             if (assets != null) {
                 for (index in 0 until assets.length()) {
                     val asset = assets.optJSONObject(index) ?: continue
                     if (asset.optString("name") == ANDROID_ASSET_NAME) {
                         apkUrl = asset.optString("browser_download_url").takeIf { it.isNotBlank() }
+                        apkDigest = asset.optString("digest").removePrefix("sha256:").takeIf { it.length == 64 }
                         break
                     }
                 }
             }
 
-            if (apkUrl == null) {
+            if (apkUrl == null || apkDigest == null) {
                 return@withContext CheckResult.Error("The latest release does not contain $ANDROID_ASSET_NAME.")
             }
 
@@ -80,7 +84,8 @@ class UpdateManager(private val activity: Activity) {
                 AvailableUpdate(
                     buildNumber = latestBuild,
                     tag = tag,
-                    downloadUrl = apkUrl
+                    downloadUrl = apkUrl,
+                    sha256 = apkDigest
                 )
             )
         } catch (error: Exception) {
@@ -108,7 +113,11 @@ class UpdateManager(private val activity: Activity) {
                     target.outputStream().use { output -> input.copyTo(output) }
                 }
                 connection.disconnect()
-                if (target.length() < 1_000_000L) null else target
+                val actual = MessageDigest.getInstance("SHA-256").digest(target.readBytes()).joinToString("") { "%02x".format(it) }
+                if (target.length() < 1_000_000L || !actual.equals(update.sha256, ignoreCase = true)) {
+                    target.delete()
+                    null
+                } else target
             } catch (_: Exception) {
                 null
             }
@@ -157,6 +166,6 @@ class UpdateManager(private val activity: Activity) {
     companion object {
         private const val LATEST_RELEASE_API =
             "https://api.github.com/repos/Mhd-Azeem/Jarvis/releases/latest"
-        private const val ANDROID_ASSET_NAME = "Jarvis-installable.apk"
+        private const val ANDROID_ASSET_NAME = "Jarvis-Android.apk"
     }
 }
