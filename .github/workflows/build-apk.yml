@@ -3,6 +3,15 @@ name: Build Jarvis Android
 on:
   push:
     branches: [ main, az-jarvis-core ]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 permissions:

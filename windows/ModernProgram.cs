@@ -42,7 +42,7 @@ internal static class ModernProgram
     }
 }
 
-internal sealed class ModernJarvisForm : Form
+internal sealed partial class ModernJarvisForm : Form
 {
     private static readonly Color Bg = Color.FromArgb(5, 9, 17);
     private static readonly Color Panel = Color.FromArgb(20, 29, 43);
@@ -86,8 +86,8 @@ internal sealed class ModernJarvisForm : Form
     {
         Text = "JARVIS • Windows Assistant";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(980, 660);
-        Size = new Size(1180, 760);
+        MinimumSize = new Size(1080, 720);
+        Size = new Size(1450, 850);
         BackColor = Bg;
         ForeColor = TextMain;
         Font = new Font("Segoe UI", 10F);
@@ -96,33 +96,22 @@ internal sealed class ModernJarvisForm : Form
         var shell = new GradientPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(22),
+            Padding = new Padding(4),
             StartColor = Color.FromArgb(5, 9, 17),
             EndColor = Color.FromArgb(8, 21, 36)
         };
 
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
-            BackColor = Color.Transparent,
-            Padding = new Padding(0),
-        };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300F));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-
-        layout.Controls.Add(BuildSidebar(), 0, 0);
-        layout.Controls.Add(BuildMainPanel(), 1, 0);
-        shell.Controls.Add(layout);
+        shell.Controls.Add(BuildCommandCenter());
         Controls.Add(shell);
 
         AcceptButton = runButton;
         monitorTimer.Tick += (_, _) => monitorLabel.Text = SystemMonitor.Snapshot();
         monitorTimer.Tick += (_, _) => CheckReminders();
+        monitorTimer.Tick += (_, _) => UpdateDashboardData();
         monitorLabel.Text = SystemMonitor.Snapshot();
+        UpdateDashboardData();
         monitorTimer.Start();
-        wake.StatusChanged += status => { if (IsHandleCreated) BeginInvoke((Action)(() => { listeningLabel.Text = status; reactor.Listening = wake.IsRunning; })); };
+        wake.StatusChanged += status => { if (IsHandleCreated) BeginInvoke((Action)(() => { listeningLabel.Text = status; reactor.Listening = wake.IsRunning; voiceWave.Active = wake.IsRunning; UpdateDashboardData(); })); };
         wake.CommandHeard += command => { if (IsHandleCreated) BeginInvoke((Action)(async () => {
             commandBox.Text = command;
             try { var result = await ExecuteWithCloudAsync(command); SetResponse(result); if (assistantSettings.SpeakReplies) await SpeakAsync(result); }
@@ -642,17 +631,26 @@ internal sealed class ModernJarvisForm : Form
     private void ShowProviderSettings()
     {
         using var dialog = new Form {
-            Text = "Jarvis settings", Size = new Size(560, 430),
+            Text = "Jarvis settings", Size = new Size(560, 540),
             StartPosition = FormStartPosition.CenterParent, BackColor = Panel, ForeColor = TextMain,
             FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false
         };
+        var providerPicker = new ComboBox { Width = 490, DropDownStyle = ComboBoxStyle.DropDownList };
+        providerPicker.Items.AddRange(new object[] { "OpenAI", "Google Gemini", "Custom OpenAI-compatible HTTPS" });
+        providerPicker.SelectedIndex = assistantSettings.Endpoint.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase) ? 1 : assistantSettings.Endpoint.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase) ? 0 : 2;
         var endpointBox = new TextBox { Text = assistantSettings.Endpoint, Width = 490 };
         var modelBox = new TextBox { Text = assistantSettings.Model, Width = 490 };
+        providerPicker.SelectedIndexChanged += (_, _) => {
+            if (providerPicker.SelectedIndex == 0) { endpointBox.Text = "https://api.openai.com/v1/chat/completions"; modelBox.Text = "gpt-4o-mini"; }
+            if (providerPicker.SelectedIndex == 1) { endpointBox.Text = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"; modelBox.Text = "gemini-3.8-flash"; }
+        };
         var keyBox = new TextBox { Text = assistantSettings.ApiKey, Width = 490, UseSystemPasswordChar = true };
         var speakBox = new CheckBox { Text = "Speak responses", Checked = assistantSettings.SpeakReplies, AutoSize = true, ForeColor = TextMain };
         var sensitivityBox = new NumericUpDown { Minimum = 35, Maximum = 90, Value = (decimal)(Math.Clamp(assistantSettings.WakeSensitivity, 0.35f, 0.90f) * 100), Width = 100 };
         var save = new Button { Text = "Save settings", Width = 150, DialogResult = DialogResult.OK };
         var stack = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(20), AutoScroll = true };
+        stack.Controls.Add(new Label { Text = "AI provider", Width = 490, Height = 24, ForeColor = Muted });
+        stack.Controls.Add(providerPicker);
         foreach (var pair in new[] { ("HTTPS chat endpoint", endpointBox), ("Model", modelBox), ("API key, encrypted for this Windows user", keyBox) })
         {
             stack.Controls.Add(new Label { Text = pair.Item1, Width = 490, Height = 24, ForeColor = Muted });
@@ -661,7 +659,7 @@ internal sealed class ModernJarvisForm : Form
         stack.Controls.Add(speakBox);
         stack.Controls.Add(new Label { Text = "Hey Jarvis sensitivity (35–90%)", Width = 490, Height = 24, ForeColor = Muted });
         stack.Controls.Add(sensitivityBox);
-        stack.Controls.Add(new Label { Text = "Audio is handled by Windows speech services. Only typed or recognized text is sent to the configured provider.", Width = 490, Height = 42, ForeColor = Muted });
+        stack.Controls.Add(new Label { Text = "Local commands and offline wake recognition stay on your PC. Chat text is sent to the selected provider only when you ask a cloud question.", Width = 490, Height = 42, ForeColor = Muted });
         stack.Controls.Add(save);
         dialog.Controls.Add(stack);
         dialog.AcceptButton = save;
@@ -845,7 +843,7 @@ internal sealed class ModernJarvisForm : Form
         keybd_event(key, 0, KeyEventKeyUp, UIntPtr.Zero);
     }
 
-    private void SetResponse(string text) => responseBox.Text = text;
+    private void SetResponse(string text) { responseBox.Text = text; UpdateDashboardData(); }
 
     private static async Task<string?> ListenOnceAsync()
     {
@@ -944,7 +942,7 @@ internal sealed class RoundedPanel : Panel
 
 internal sealed class ArcReactorControl : Control
 {
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 35 };
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 50 };
     private float angle;
     private bool listening;
     public bool Listening
@@ -964,27 +962,57 @@ internal sealed class ArcReactorControl : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        var size = Math.Min(Width, Height) - 24;
-        var rect = new RectangleF((Width - size) / 2F, (Height - size) / 2F, size, size);
-
-        using var glow = new Pen(Color.FromArgb(Listening ? 125 : 75, 83, 233, 255), Listening ? 9F : 6F);
-        e.Graphics.DrawEllipse(glow, rect);
-
-        var inner = RectangleF.Inflate(rect, -18, -18);
-        using var ring = new Pen(Color.FromArgb(180, 83, 233, 255), 2F);
-        e.Graphics.DrawArc(ring, inner, angle, 105F);
-        e.Graphics.DrawArc(ring, inner, angle + 180F, 105F);
-
-        var core = RectangleF.Inflate(inner, -27, -27);
-        using var brush = new LinearGradientBrush(core, Color.FromArgb(125, 244, 255), Color.FromArgb(19, 92, 128), 45F);
-        e.Graphics.FillEllipse(brush, core);
-        using var corePen = new Pen(Color.FromArgb(210, 130, 248, 255), 2F);
-        e.Graphics.DrawEllipse(corePen, core);
-
-        using var font = new Font("Segoe UI", 24F, FontStyle.Bold);
-        var label = Listening ? "●" : "J";
-        var measured = e.Graphics.MeasureString(label, font);
-        e.Graphics.DrawString(label, font, Brushes.White, Width / 2F - measured.Width / 2F, Height / 2F - measured.Height / 2F);
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var diameter = Math.Max(80, Math.Min(Width - 28, Height - 20));
+        var sphere = new RectangleF((Width - diameter) / 2F, (Height - diameter) / 2F, diameter, diameter);
+        using (var path = new GraphicsPath())
+        {
+            path.AddEllipse(sphere);
+            using var fill = new PathGradientBrush(path)
+            {
+                CenterColor = Color.FromArgb(28, 90, 128),
+                SurroundColors = new[] { Color.FromArgb(5, 16, 31) }
+            };
+            g.FillEllipse(fill, sphere);
+        }
+        using var halo = new Pen(Color.FromArgb(Listening ? 115 : 65, 39, 213, 247), 8F);
+        using var edge = new Pen(Color.FromArgb(180, 74, 205, 237), 1.4F);
+        using var mesh = new Pen(Color.FromArgb(40, 92, 194, 224), 1F);
+        g.DrawEllipse(halo, sphere);
+        g.DrawEllipse(edge, sphere);
+        for (var i = 1; i <= 5; i++)
+        {
+            var fraction = i / 6F;
+            var y = sphere.Top + sphere.Height * fraction;
+            var latitudeHeight = Math.Max(5, sphere.Height * .11F * (1 - Math.Abs(fraction - .5F)));
+            g.DrawEllipse(mesh, sphere.Left + 7, y - latitudeHeight / 2, sphere.Width - 14, latitudeHeight);
+        }
+        for (var i = 1; i <= 4; i++)
+        {
+            var width = sphere.Width * i / 5F;
+            g.DrawEllipse(mesh, sphere.Left + (sphere.Width - width) / 2, sphere.Top + 5, width, sphere.Height - 10);
+        }
+        var orbit = RectangleF.Inflate(sphere, 10, -sphere.Height * .34F);
+        using var orbitPen = new Pen(Color.FromArgb(100, 68, 206, 238), 1.2F);
+        g.DrawArc(orbitPen, orbit, angle, 155);
+        g.DrawArc(orbitPen, orbit, angle + 180, 115);
+        for (var i = 0; i < 9; i++)
+        {
+            var a = (i * 40 + angle * (i % 2 == 0 ? 1 : -.35)) * Math.PI / 180;
+            var x = sphere.Left + sphere.Width / 2 + (sphere.Width / 2 - 7) * Math.Cos(a);
+            var y = sphere.Top + sphere.Height / 2 + (sphere.Height / 2 - 7) * Math.Sin(a);
+            using var dot = new SolidBrush(Color.FromArgb(110 + i * 13, 107, 229, 250));
+            g.FillEllipse(dot, (float)x - 2, (float)y - 2, 4, 4);
+        }
+        using var titleFont = new Font("Segoe UI", Math.Max(12F, diameter / 13F), FontStyle.Bold);
+        using var subFont = new Font("Segoe UI", Math.Max(8F, diameter / 29F), FontStyle.Bold);
+        using var textBrush = new SolidBrush(Color.FromArgb(188, 245, 255));
+        var title = "J A R V I S";
+        var titleSize = g.MeasureString(title, titleFont);
+        g.DrawString(title, titleFont, textBrush, sphere.Left + (sphere.Width - titleSize.Width) / 2, sphere.Top + sphere.Height * .40F);
+        var subtitle = Listening ? "LISTENING" : "A I   C O R E";
+        var subSize = g.MeasureString(subtitle, subFont);
+        g.DrawString(subtitle, subFont, textBrush, sphere.Left + (sphere.Width - subSize.Width) / 2, sphere.Top + sphere.Height * .55F);
     }
 }
