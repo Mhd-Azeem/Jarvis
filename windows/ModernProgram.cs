@@ -94,6 +94,15 @@ internal sealed partial class ModernJarvisForm : Form
     private const byte VkMediaPlayPause = 0xB3;
     private const uint KeyEventKeyUp = 0x0002;
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        try { var dark = 1; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); } catch { }
+    }
+
     [DllImport("user32.dll")]
     private static extern bool LockWorkStation();
 
@@ -123,10 +132,10 @@ internal sealed partial class ModernJarvisForm : Form
         Controls.Add(shell);
 
         AcceptButton = runButton;
-        monitorTimer.Tick += (_, _) => monitorLabel.Text = SystemMonitor.Snapshot();
+        monitorTimer.Tick += (_, _) => monitorLabel.Text = SystemMonitor.Snapshot().Replace("  •  ", "\n");
         monitorTimer.Tick += (_, _) => CheckReminders();
         monitorTimer.Tick += (_, _) => UpdateDashboardData();
-        monitorLabel.Text = SystemMonitor.Snapshot();
+        monitorLabel.Text = SystemMonitor.Snapshot().Replace("  •  ", "\n");
         UpdateDashboardData();
         monitorTimer.Start();
         wake.StatusChanged += status => { if (IsHandleCreated) BeginInvoke((Action)(() => { listeningLabel.Text = status; reactor.Listening = wake.IsRunning; voiceWave.Active = wake.IsRunning; UpdateDashboardData(); })); };

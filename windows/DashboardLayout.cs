@@ -30,8 +30,8 @@ internal sealed partial class ModernJarvisForm
         shell.Margin = new Padding(0, 0, 8, 0);
         shell.Padding = new Padding(12);
         var nav = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, BackColor = Color.Transparent };
-        nav.Controls.Add(new Label { Text = "◉  J A R V I S", Width = 165, Height = 39, ForeColor = Cyan, Font = new Font("Segoe UI", 14F, FontStyle.Bold) });
-        nav.Controls.Add(new Label { Text = "COMMAND CENTER", Width = 165, Height = 29, ForeColor = Muted, Font = new Font("Segoe UI", 8F, FontStyle.Bold) });
+        nav.Controls.Add(new Label { Text = "◉  J A R V I S", Width = 150, Height = 39, ForeColor = Cyan, Font = new Font("Segoe UI", 14F, FontStyle.Bold) });
+        nav.Controls.Add(new Label { Text = "COMMAND CENTER", Width = 150, Height = 29, ForeColor = Muted, Font = new Font("Segoe UI", 8F, FontStyle.Bold) });
         nav.Controls.Add(NavButton("⌗  Command Center", () => commandBox.Focus()));
         nav.Controls.Add(NavButton("◎  AI Core", () => reactor.Focus()));
         nav.Controls.Add(NavButton("◈  Capabilities", ShowCapabilities));
@@ -41,17 +41,17 @@ internal sealed partial class ModernJarvisForm
         nav.Controls.Add(NavButton("▤  Conversations", ShowHistorySearch));
         nav.Controls.Add(NavButton("⌁  Workflows", () => MessageBox.Show(this, "Configurable workflows are not available yet. Quick commands and local tasks are ready.", "Jarvis workflows")));
         nav.Controls.Add(NavButton("⚙  Settings", ShowProviderSettings));
-        nav.Controls.Add(new Label { Text = "VOICE CONTROL", Width = 165, Height = 31, ForeColor = Cyan, Font = new Font("Segoe UI", 8F, FontStyle.Bold), Padding = new Padding(6, 12, 0, 0) });
+        nav.Controls.Add(new Label { Text = "VOICE CONTROL", Width = 150, Height = 31, ForeColor = Cyan, Font = new Font("Segoe UI", 8F, FontStyle.Bold), Padding = new Padding(6, 12, 0, 0) });
         nav.Controls.Add(NavButton("◉  Speak to Jarvis", async () => await ListenAndExecuteAsync()));
         nav.Controls.Add(NavButton("◌  Toggle wake word", async () => await ToggleWakeAsync()));
-        nav.Controls.Add(new Label { Text = $"BUILD {BuildInfo.ReleaseBuild}  •  WINDOWS X64", Width = 165, Height = 38, ForeColor = Muted, Font = new Font("Segoe UI", 7F, FontStyle.Bold), Padding = new Padding(6, 15, 0, 0) });
+        nav.Controls.Add(new Label { Text = $"BUILD {BuildInfo.ReleaseBuild}  •  WINDOWS X64", Width = 150, Height = 38, ForeColor = Muted, Font = new Font("Segoe UI", 7F, FontStyle.Bold), Padding = new Padding(6, 15, 0, 0) });
         shell.Controls.Add(nav);
         return shell;
     }
 
     private Button NavButton(string text, Action action)
     {
-        var button = new Button { Text = text, Width = 162, Height = 37, TextAlign = ContentAlignment.MiddleLeft, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(11, 27, 41), ForeColor = TextMain, Font = new Font("Segoe UI", 9F), Margin = new Padding(0, 0, 0, 4), Cursor = Cursors.Hand };
+        var button = new Button { Text = text, Width = 150, Height = 34, TextAlign = ContentAlignment.MiddleLeft, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(11, 27, 41), ForeColor = TextMain, Font = new Font("Segoe UI", 9F), Margin = new Padding(0, 0, 0, 3), Cursor = Cursors.Hand };
         button.FlatAppearance.BorderColor = Color.FromArgb(27, 63, 85);
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(18, 60, 79);
         button.Click += (_, _) => action();
@@ -62,9 +62,9 @@ internal sealed partial class ModernJarvisForm
     {
         var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, BackColor = Color.Transparent, Margin = new Padding(0) };
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 43));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 31));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 26));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 48));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 30));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 22));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 75));
         body.Controls.Add(BuildDashboardHeader(), 0, 0);
         body.Controls.Add(BuildCoreRow(), 0, 1);
@@ -80,7 +80,7 @@ internal sealed partial class ModernJarvisForm
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
-        header.Controls.Add(new Label { Text = "●  SYSTEM STATUS  /  OPTIMAL", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(99, 234, 197), Font = new Font("Segoe UI", 8F, FontStyle.Bold) }, 0, 0);
+        header.Controls.Add(new Label { Text = "●  SYSTEM STATUS  /  LIVE", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(99, 234, 197), Font = new Font("Segoe UI", 8F, FontStyle.Bold) }, 0, 0);
         dashboardClock.Dock = DockStyle.Fill;
         dashboardClock.TextAlign = ContentAlignment.MiddleCenter;
         dashboardClock.ForeColor = Cyan;
@@ -96,7 +96,7 @@ internal sealed partial class ModernJarvisForm
     {
         var row = DashboardGrid(3, 19, 57, 24);
         var overview = DashboardCard();
-        overview.Controls.Add(FillText(coreOverview, 9F));
+        overview.Controls.Add(FillText(coreOverview, 8F));
         overview.Controls.Add(CardHeader("AI CORE OVERVIEW"));
         row.Controls.Add(overview, 0, 0);
 
@@ -261,6 +261,8 @@ internal sealed partial class ModernJarvisForm
     private void AddQuickAction(TableLayoutPanel grid, int column, int row, string symbol, string label, string command)
     {
         var button = CreateQuickButton(symbol, label);
+        button.Text = $"{symbol}  {label}";
+        button.Font = new Font("Segoe UI", 8F, FontStyle.Bold);
         button.Dock = DockStyle.Fill;
         button.Margin = new Padding(3);
         button.Click += async (_, _) => { commandBox.Text = command; await ExecuteCurrentCommandAsync(); };
@@ -273,14 +275,14 @@ internal sealed partial class ModernJarvisForm
         var pending = tasks.Count(task => !task.Done);
         var providerName = assistantSettings.Endpoint.Contains("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase) ? "GEMINI" : assistantSettings.Endpoint.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase) ? "OPENAI" : "CUSTOM HTTPS";
         var providerReady = !string.IsNullOrWhiteSpace(assistantSettings.ApiKey);
-        coreOverview.Text = $"◎  Core            Ready\n\n◉  Voice          {(wake.IsRunning ? "Listening locally" : "Push to talk")}\n\n☷  Tasks          {pending} pending\n\n◈  Provider       {(providerReady ? "Configured" : "Not configured")}\n\n▤  History        {history.Count} turns";
+        coreOverview.Text = $"◎  CORE\n     Ready\n\n◉  VOICE\n     {(wake.IsRunning ? "Listening" : "Push to talk")}\n\n☷  TASKS  {pending} pending\n◈  CLOUD  {(providerReady ? "Configured" : "Key missing")}";
         var recent = history.Where(turn => turn.Role == "user").TakeLast(3).Reverse().Select(turn => "›  " + (turn.Text.Length > 55 ? turn.Text[..55] + "…" : turn.Text));
         activityFeed.Text = history.Count == 0 ? "No recent activity.\n\nCommands and conversations appear here after use." : string.Join("\n\n", recent);
         capabilityStatus.Text = $"●  System commands     Ready\n●  Browser open/search   Ready\n●  Local tasks/reminders  Ready\n●  AI chat              {(providerReady ? "Configured" : "Needs API key")}\n○  Advanced agents     Unavailable";
         var upcoming = tasks.Where(task => !task.Done && task.DueAt is not null).OrderBy(task => task.DueAt).Take(3).Select(task => $"{task.DueAt:HH:mm}  •  {task.Title}");
         missionTimeline.Text = !upcoming.Any() ? $"{pending} pending tasks\n\nNo scheduled reminders." : string.Join("\n\n", upcoming);
         memoryInsights.Text = $"{history.Count} conversation turns saved\n{pending} pending tasks\n\nStored locally for this Windows user.";
-        providerStatus.Text = $"{providerName}\n{(providerReady ? "Key saved securely; connection untested" : "No API key configured")}\nModel: {assistantSettings.Model}";
+        providerStatus.Text = $"{providerName}  •  {(providerReady ? "Configured" : "Key missing")}\nModel: {assistantSettings.Model}\n{(providerReady ? "Connection checked on first request" : "Local commands still work")}";
         voiceWave.Active = wake.IsRunning;
     }
 
@@ -319,6 +321,7 @@ internal sealed class VoiceWaveControl : Control
     public VoiceWaveControl()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        BackColor = Color.FromArgb(11, 23, 38);
         timer.Tick += (_, _) => { if (!Active) return; frame++; Invalidate(); };
         timer.Start();
     }
