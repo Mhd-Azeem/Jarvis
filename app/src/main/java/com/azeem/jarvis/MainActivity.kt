@@ -1,6 +1,9 @@
 package com.azeem.jarvis
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.Settings
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
@@ -53,10 +56,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import androidx.core.content.ContextCompat
 import com.azeem.jarvis.core.AiClient
 import com.azeem.jarvis.core.ChatTurn
 import com.azeem.jarvis.core.JarvisCommandProcessor
@@ -97,6 +103,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private var speakReplies by mutableStateOf(true)
     private var updateStatus by mutableStateOf("Tap to check for updates")
     private var availableUpdate by mutableStateOf<UpdateManager.AvailableUpdate?>(null)
+    private var requestCameraPermission: (() -> Unit)? = null
+    private var pendingCameraCommand: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -112,6 +120,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         page = if (secure.get("onboarded") == "yes") Page.Home else Page.Welcome
 
         setContent {
+            val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                val pending = pendingCameraCommand
+                pendingCameraCommand = null
+                if (granted && pending != null) submit(pending)
+                else response = "Camera permission is required to control the flashlight."
+            }
+            requestCameraPermission = { cameraLauncher.launch(Manifest.permission.CAMERA) }
             val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 listening = false
                 val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
@@ -161,7 +176,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     onQuick = { submit(it) },
                     onClearHistory = { turns = emptyList(); secure.remove("history") },
                     onCheckUpdate = ::checkUpdate,
-                    onInstallUpdate = ::installUpdate
+                    onInstallUpdate = ::installUpdate,
+                    onAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    onNotificationSettings = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
                 )
             }
         }
@@ -170,6 +187,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private fun submit(input: String) {
         val value = input.trim()
         if (value.isEmpty() || busy) return
+        if ((value.contains("flashlight", true) || value.contains("torch", true)) &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            pendingCameraCommand = value
+            requestCameraPermission?.invoke()
+            return
+        }
         prompt = ""
         response = ""
         val request = turns + ChatTurn("user", value)
@@ -289,7 +312,9 @@ private fun JarvisApp(
     onQuick: (String) -> Unit,
     onClearHistory: () -> Unit,
     onCheckUpdate: () -> Unit,
-    onInstallUpdate: () -> Unit
+    onInstallUpdate: () -> Unit,
+    onAccessibilitySettings: () -> Unit,
+    onNotificationSettings: () -> Unit
 ) {
     Scaffold(
         containerColor = Background,
@@ -394,7 +419,7 @@ private fun JarvisApp(
                             Text("Requests are sent to this provider only when you submit a chat message.", color = Dim, fontSize = 12.sp)
                             Field("HTTPS chat endpoint", endpoint, onEndpoint)
                             Field("Model", model, onModel)
-                            Field("API key (stored encrypted)", apiKey, onApiKey)
+                            Field("API key (stored encrypted)", apiKey, onApiKey, secret = true)
                             Text(if (connected) "● Key configured" else "○ No provider key configured", color = if (connected) Pink else Dim)
                         }
                         Glass {
@@ -402,6 +427,10 @@ private fun JarvisApp(
                                 Text("Speak responses", color = TextColor)
                                 Switch(checked = speakReplies, onCheckedChange = onSpeakReplies)
                             }
+                            Text("ACCESS", color = Pink, fontWeight = FontWeight.Bold)
+                            OutlinedButton(onClick = onAccessibilitySettings) { Text("Accessibility controls") }
+                            OutlinedButton(onClick = onNotificationSettings) { Text("Notification access") }
+                            Text("Enable these Android permissions only if you want voice control of other apps or notification summaries.", color = Dim, fontSize = 12.sp)
                             Text("Wake-word listening: not available in this build", color = Dim, fontSize = 12.sp)
                             Text("Microphone starts only when you tap Speak. Speech recognition may use your device's configured service.", color = Dim, fontSize = 12.sp)
                         }
@@ -422,13 +451,14 @@ private fun JarvisApp(
 }
 
 @Composable
-private fun Field(label: String, value: String, changed: (String) -> Unit) {
+private fun Field(label: String, value: String, changed: (String) -> Unit, secret: Boolean = false) {
     OutlinedTextField(
         value = value,
         onValueChange = changed,
         label = { Text(label) },
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         singleLine = true,
+        visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Purple, unfocusedBorderColor = Color(0xFF5A3A76), focusedTextColor = TextColor, unfocusedTextColor = TextColor)
     )
 }

@@ -39,6 +39,8 @@ internal sealed class ModernJarvisForm : Form
     private CancellationTokenSource? pendingRequest;
     private readonly NotifyIcon trayIcon = new();
     private bool exitRequested;
+    private readonly Label monitorLabel = new();
+    private readonly System.Windows.Forms.Timer monitorTimer = new() { Interval = 2500 };
 
     private const byte VkVolumeMute = 0xAD;
     private const byte VkVolumeDown = 0xAE;
@@ -90,6 +92,9 @@ internal sealed class ModernJarvisForm : Form
         Controls.Add(shell);
 
         AcceptButton = runButton;
+        monitorTimer.Tick += (_, _) => monitorLabel.Text = SystemMonitor.Snapshot();
+        monitorLabel.Text = SystemMonitor.Snapshot();
+        monitorTimer.Start();
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Open Jarvis", null, (_, _) => RestoreFromTray());
         trayMenu.Items.Add("Exit Jarvis", null, (_, _) => { exitRequested = true; Close(); });
@@ -117,6 +122,7 @@ internal sealed class ModernJarvisForm : Form
             return;
         }
         trayIcon.Visible = false;
+        monitorTimer.Stop();
         trayIcon.Dispose();
         base.OnFormClosing(e);
     }
@@ -175,8 +181,8 @@ internal sealed class ModernJarvisForm : Form
         content.Controls.Add(CreateSectionLabel("SYSTEM"));
         content.Controls.Add(CreateInfoRow("Build", $"#{BuildInfo.ReleaseBuild}"));
         content.Controls.Add(CreateInfoRow("Platform", "Windows x64"));
-        content.Controls.Add(CreateInfoRow("Voice", "Enabled"));
-        content.Controls.Add(CreateInfoRow("Updates", "Automatic"));
+        content.Controls.Add(CreateInfoRow("Voice", "Push to talk"));
+        content.Controls.Add(CreateInfoRow("Updates", "Checks on launch"));
 
         var updateButton = CreateButton("Check for updates", false);
         updateButton.Width = 230;
@@ -209,10 +215,11 @@ internal sealed class ModernJarvisForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
             BackColor = Color.Transparent,
             Padding = new Padding(6, 0, 0, 0)
         };
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -302,6 +309,18 @@ internal sealed class ModernJarvisForm : Form
         AddQuickAction(quickGrid, 5, "⌘", "System", "system info");
         quickCard.Controls.Add(quickGrid);
 
+        var monitorCard = CreateCardPanel();
+        monitorCard.Dock = DockStyle.Top;
+        monitorCard.Height = 84;
+        monitorCard.Margin = new Padding(0, 0, 0, 12);
+        monitorCard.Padding = new Padding(18);
+        var monitorTitle = new Label { Text = "LIVE SYSTEM MONITOR", Dock = DockStyle.Top, Height = 24, ForeColor = Cyan, Font = new Font("Segoe UI", 9F, FontStyle.Bold) };
+        monitorLabel.Dock = DockStyle.Fill;
+        monitorLabel.ForeColor = TextMain;
+        monitorLabel.TextAlign = ContentAlignment.MiddleLeft;
+        monitorCard.Controls.Add(monitorLabel);
+        monitorCard.Controls.Add(monitorTitle);
+
         var responseCard = CreateCardPanel();
         responseCard.Dock = DockStyle.Fill;
         responseCard.Margin = new Padding(0, 0, 0, 12);
@@ -343,8 +362,9 @@ internal sealed class ModernJarvisForm : Form
         main.Controls.Add(header, 0, 0);
         main.Controls.Add(commandCard, 0, 1);
         main.Controls.Add(quickCard, 0, 2);
-        main.Controls.Add(responseCard, 0, 3);
-        main.Controls.Add(footer, 0, 4);
+        main.Controls.Add(monitorCard, 0, 3);
+        main.Controls.Add(responseCard, 0, 4);
+        main.Controls.Add(footer, 0, 5);
         return main;
     }
 
