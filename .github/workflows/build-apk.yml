@@ -142,10 +142,9 @@ jobs:
 
   release:
     name: Publish combined release
-    if: github.event_name != 'schedule'
     needs: [android, windows]
-    # Publish the Android APK even when the independent Windows job fails.
-    if: ${{ always() && needs.android.result == 'success' }}
+    # Evaluate dependencies even if Windows fails, but only publish on non-scheduled runs.
+    if: ${{ always() && github.event_name != 'schedule' && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
