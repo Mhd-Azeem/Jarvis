@@ -49,10 +49,12 @@ jobs:
       - name: Verify desktop window launches
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -PassThru -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-          if ($process.HasExited) { throw "Jarvis desktop exited early with code $($process.ExitCode)" }
-          Stop-Process -Id $process.Id -Force
+          $env:JARVIS_SMOKE_LOG = Join-Path (Get-Location) 'jarvis-smoke-error.txt'
+          $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -ArgumentList '--ui-smoke-test' -PassThru -Wait -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path $env:JARVIS_SMOKE_LOG) { Get-Content $env:JARVIS_SMOKE_LOG }
+            throw "Jarvis desktop smoke test exited with code $($process.ExitCode)"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: jarvis-windows

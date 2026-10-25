@@ -13,9 +13,32 @@ internal static class ModernProgram
     private static int Main(string[] args)
     {
         if (args.Contains("--self-test")) return AssistantData.LoadSettings().Endpoint.StartsWith("https://", StringComparison.Ordinal) ? 0 : 1;
-        ApplicationConfiguration.Initialize();
-        Application.Run(new ModernJarvisForm());
-        return 0;
+        var smoke = args.Contains("--ui-smoke-test");
+        try
+        {
+            ApplicationConfiguration.Initialize();
+            using var form = new ModernJarvisForm();
+            if (smoke)
+            {
+                form.Shown += (_, _) =>
+                {
+                    var closeTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+                    closeTimer.Tick += (_, _) => { closeTimer.Stop(); closeTimer.Dispose(); form.Close(); };
+                    closeTimer.Start();
+                };
+            }
+            Application.Run(form);
+            return 0;
+        }
+        catch (Exception error)
+        {
+            if (smoke)
+            {
+                var log = Environment.GetEnvironmentVariable("JARVIS_SMOKE_LOG");
+                if (!string.IsNullOrWhiteSpace(log)) File.WriteAllText(log, error.ToString());
+            }
+            return 2;
+        }
     }
 }
 
