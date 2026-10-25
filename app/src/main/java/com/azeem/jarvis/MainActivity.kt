@@ -227,7 +227,7 @@ private fun JarvisDashboard(
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFF050811), Color(0xFF08111E), Color(0xFF050811))
+                    listOf(Color(0xFF030916), Color(0xFF0B1B35), Color(0xFF030916))
                 )
             )
     ) {
@@ -242,7 +242,7 @@ private fun JarvisDashboard(
             JarvisCore(isListening = isListening)
 
             Text(
-                text = if (isListening) "LISTENING…" else "HOW CAN I HELP?",
+                text = if (isListening) "LISTENING…" else "HOW CAN I HELP YOU?",
                 modifier = Modifier.fillMaxWidth(),
                 color = if (isListening) JarvisCyan else JarvisText,
                 fontWeight = FontWeight.Bold,
@@ -305,7 +305,7 @@ private fun JarvisDashboard(
                 }
             }
 
-            Text("QUICK ACTIONS", color = JarvisMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
+            Text("DEVICE SHORTCUTS", color = JarvisMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
             QuickActions(onQuickCommand)
 
             GlassCard {
@@ -317,7 +317,7 @@ private fun JarvisDashboard(
                             .background(JarvisCyan)
                     )
                     Spacer(Modifier.size(10.dp))
-                    Text("JARVIS RESPONSE", color = JarvisCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                    Text("ASSISTANT RESPONSE", color = JarvisCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(response, color = JarvisText, fontSize = 16.sp, lineHeight = 23.sp)
@@ -330,7 +330,7 @@ private fun JarvisDashboard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("SYSTEM UPDATE", color = JarvisMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                        Text("APP UPDATES", color = JarvisMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                         Spacer(Modifier.height(5.dp))
                         Text(updateStatus, color = JarvisText, fontSize = 14.sp)
                     }
@@ -386,7 +386,7 @@ private fun HeaderRow() {
     ) {
         Column {
             Text("JARVIS", color = JarvisText, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
-            Text("PERSONAL ASSISTANT", color = JarvisMuted, fontSize = 10.sp, letterSpacing = 1.7.sp)
+            Text("YOUR AI COMPANION", color = JarvisMuted, fontSize = 10.sp, letterSpacing = 1.7.sp)
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -398,7 +398,7 @@ private fun HeaderRow() {
         ) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF35F0B1)))
             Spacer(Modifier.size(7.dp))
-            Text("ONLINE", color = Color(0xFF67F4C7), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("READY", color = Color(0xFF67F4C7), fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -458,7 +458,7 @@ private fun JarvisCore(isListening: Boolean) {
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(if (isListening) "●" else "J", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                Text(if (isListening) "●" else "✦", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -468,9 +468,9 @@ private fun JarvisCore(isListening: Boolean) {
 private fun QuickActions(onQuickCommand: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            QuickAction("◈", "YouTube", "open YouTube", Modifier.weight(1f), onQuickCommand)
-            QuickAction("⌁", "Battery", "battery", Modifier.weight(1f), onQuickCommand)
-            QuickAction("✦", "Flashlight", "flashlight on", Modifier.weight(1f), onQuickCommand)
+            QuickAction("▶", "YouTube", "open YouTube", Modifier.weight(1f), onQuickCommand)
+            QuickAction("▣", "Battery", "battery", Modifier.weight(1f), onQuickCommand)
+            QuickAction("☼", "Flashlight", "flashlight on", Modifier.weight(1f), onQuickCommand)
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             QuickAction("◐", "Volume 40", "volume 40", Modifier.weight(1f), onQuickCommand)
