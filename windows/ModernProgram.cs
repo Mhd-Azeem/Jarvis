@@ -23,7 +23,7 @@ internal static class ModernProgram
                 form.Shown += (_, _) =>
                 {
                     var closeTimer = new System.Windows.Forms.Timer { Interval = 3000 };
-                    closeTimer.Tick += (_, _) => { closeTimer.Stop(); closeTimer.Dispose(); form.Close(); };
+                    closeTimer.Tick += (_, _) => { closeTimer.Stop(); closeTimer.Dispose(); Application.Exit(); };
                     closeTimer.Start();
                 };
             }
