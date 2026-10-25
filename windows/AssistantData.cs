@@ -14,6 +14,8 @@ internal sealed class AssistantSettings
     public string Model { get; set; } = "gpt-4o-mini";
     public string ApiKey { get; set; } = "";
     public bool SpeakReplies { get; set; } = true;
+    public bool WakeEnabled { get; set; } = false;
+    public float WakeSensitivity { get; set; } = 0.55f;
 }
 
 internal static class AssistantData

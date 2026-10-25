@@ -41,6 +41,7 @@ internal sealed class ModernJarvisForm : Form
     private bool exitRequested;
     private readonly Label monitorLabel = new();
     private readonly System.Windows.Forms.Timer monitorTimer = new() { Interval = 2500 };
+    private readonly WakeWordEngine wake = new();
 
     private const byte VkVolumeMute = 0xAD;
     private const byte VkVolumeDown = 0xAE;
@@ -95,6 +96,14 @@ internal sealed class ModernJarvisForm : Form
         monitorTimer.Tick += (_, _) => monitorLabel.Text = SystemMonitor.Snapshot();
         monitorLabel.Text = SystemMonitor.Snapshot();
         monitorTimer.Start();
+        wake.StatusChanged += status => { if (IsHandleCreated) BeginInvoke((Action)(() => { listeningLabel.Text = status; reactor.Listening = wake.IsRunning; })); };
+        wake.CommandHeard += command => { if (IsHandleCreated) BeginInvoke((Action)(async () => {
+            commandBox.Text = command;
+            try { var result = await ExecuteWithCloudAsync(command); SetResponse(result); if (assistantSettings.SpeakReplies) await SpeakAsync(result); }
+            catch (Exception error) { SetResponse(error.Message); }
+            finally { wake.Resume(); }
+        })); };
+        Shown += async (_, _) => { if (assistantSettings.WakeEnabled && WakeModelStore.Installed) await StartWakeAsync(); };
         var trayMenu = new ContextMenuStrip();
         trayMenu.Items.Add("Open Jarvis", null, (_, _) => RestoreFromTray());
         trayMenu.Items.Add("Exit Jarvis", null, (_, _) => { exitRequested = true; Close(); });
@@ -123,6 +132,7 @@ internal sealed class ModernJarvisForm : Form
         }
         trayIcon.Visible = false;
         monitorTimer.Stop();
+        wake.Dispose();
         trayIcon.Dispose();
         base.OnFormClosing(e);
     }
@@ -204,6 +214,16 @@ internal sealed class ModernJarvisForm : Form
         cancelButton.Margin = new Padding(0, 8, 0, 0);
         cancelButton.Click += (_, _) => pendingRequest?.Cancel();
         content.Controls.Add(cancelButton);
+        var installWakeButton = CreateButton("Install offline wake model", false);
+        installWakeButton.Width = 230;
+        installWakeButton.Margin = new Padding(0, 8, 0, 0);
+        installWakeButton.Click += async (_, _) => await InstallWakeModelAsync();
+        content.Controls.Add(installWakeButton);
+        var wakeButton = CreateButton("Toggle Hey Jarvis", false);
+        wakeButton.Width = 230;
+        wakeButton.Margin = new Padding(0, 8, 0, 0);
+        wakeButton.Click += async (_, _) => await ToggleWakeAsync();
+        content.Controls.Add(wakeButton);
 
         sidebar.Controls.Add(content);
         return sidebar;
@@ -494,6 +514,7 @@ internal sealed class ModernJarvisForm : Form
 
     private async Task ListenAndExecuteAsync()
     {
+        if (wake.IsRunning) { SetResponse("Turn off Hey Jarvis before using push-to-talk."); return; }
         listenButton.Enabled = false;
         listeningLabel.Text = "●  LISTENING";
         listeningLabel.ForeColor = Cyan;
@@ -522,6 +543,46 @@ internal sealed class ModernJarvisForm : Form
         }
     }
 
+    private async Task InstallWakeModelAsync()
+    {
+        if (WakeModelStore.Installed) { SetResponse("Offline wake model is ready."); return; }
+        try
+        {
+            await WakeModelStore.InstallAsync(status => { if (IsHandleCreated) BeginInvoke((Action)(() => SetResponse(status))); });
+            SetResponse("Offline wake model installed. Select Toggle Hey Jarvis to enable listening.");
+        }
+        catch (Exception error) { SetResponse($"Model installation failed: {error.Message}"); }
+    }
+
+    private async Task ToggleWakeAsync()
+    {
+        if (wake.IsRunning)
+        {
+            wake.Stop();
+            assistantSettings.WakeEnabled = false;
+            AssistantData.SaveSettings(assistantSettings);
+            return;
+        }
+        await StartWakeAsync();
+    }
+
+    private async Task StartWakeAsync()
+    {
+        if (!WakeModelStore.Installed) { SetResponse("Install the offline wake model first."); return; }
+        try
+        {
+            wake.Sensitivity = assistantSettings.WakeSensitivity;
+            await wake.StartAsync();
+            assistantSettings.WakeEnabled = true;
+            AssistantData.SaveSettings(assistantSettings);
+        }
+        catch (Exception error)
+        {
+            assistantSettings.WakeEnabled = false;
+            AssistantData.SaveSettings(assistantSettings);
+            SetResponse($"Could not start Hey Jarvis: {error.Message}");
+        }
+    }
     private async Task<string> ExecuteWithCloudAsync(string command)
     {
         var local = ExecuteCommand(command);
@@ -550,7 +611,7 @@ internal sealed class ModernJarvisForm : Form
     private void ShowProviderSettings()
     {
         using var dialog = new Form {
-            Text = "Jarvis AI provider", Size = new Size(560, 380),
+            Text = "Jarvis settings", Size = new Size(560, 430),
             StartPosition = FormStartPosition.CenterParent, BackColor = Panel, ForeColor = TextMain,
             FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false
         };
@@ -558,6 +619,7 @@ internal sealed class ModernJarvisForm : Form
         var modelBox = new TextBox { Text = assistantSettings.Model, Width = 490 };
         var keyBox = new TextBox { Text = assistantSettings.ApiKey, Width = 490, UseSystemPasswordChar = true };
         var speakBox = new CheckBox { Text = "Speak responses", Checked = assistantSettings.SpeakReplies, AutoSize = true, ForeColor = TextMain };
+        var sensitivityBox = new NumericUpDown { Minimum = 35, Maximum = 90, Value = (decimal)(Math.Clamp(assistantSettings.WakeSensitivity, 0.35f, 0.90f) * 100), Width = 100 };
         var save = new Button { Text = "Save settings", Width = 150, DialogResult = DialogResult.OK };
         var stack = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(20), AutoScroll = true };
         foreach (var pair in new[] { ("HTTPS chat endpoint", endpointBox), ("Model", modelBox), ("API key, encrypted for this Windows user", keyBox) })
@@ -566,6 +628,8 @@ internal sealed class ModernJarvisForm : Form
             stack.Controls.Add(pair.Item2);
         }
         stack.Controls.Add(speakBox);
+        stack.Controls.Add(new Label { Text = "Hey Jarvis sensitivity (35–90%)", Width = 490, Height = 24, ForeColor = Muted });
+        stack.Controls.Add(sensitivityBox);
         stack.Controls.Add(new Label { Text = "Audio is handled by Windows speech services. Only typed or recognized text is sent to the configured provider.", Width = 490, Height = 42, ForeColor = Muted });
         stack.Controls.Add(save);
         dialog.Controls.Add(stack);
@@ -576,7 +640,8 @@ internal sealed class ModernJarvisForm : Form
             MessageBox.Show(this, "The provider endpoint must use HTTPS.", "Jarvis settings");
             return;
         }
-        assistantSettings = new AssistantSettings { Endpoint = endpointBox.Text.Trim(), Model = modelBox.Text.Trim(), ApiKey = keyBox.Text.Trim(), SpeakReplies = speakBox.Checked };
+        assistantSettings = new AssistantSettings { Endpoint = endpointBox.Text.Trim(), Model = modelBox.Text.Trim(), ApiKey = keyBox.Text.Trim(), SpeakReplies = speakBox.Checked, WakeEnabled = assistantSettings.WakeEnabled, WakeSensitivity = (float)sensitivityBox.Value / 100f };
+        wake.Sensitivity = assistantSettings.WakeSensitivity;
         AssistantData.SaveSettings(assistantSettings);
         SetResponse(assistantSettings.ApiKey.Length == 0 ? "Local commands ready. No AI provider key configured." : "AI provider settings saved.");
     }
