@@ -1,4 +1,4 @@
-name: Build Jarvis Android + Windows
+name: Build Jarvis Android
 
 on:
   push:
@@ -74,40 +74,6 @@ jobs:
           path: Jarvis-Android.apk
           if-no-files-found: error
 
-  windows:
-    name: Build Windows EXE
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - name: Embed release build number
-        shell: pwsh
-        run: |
-          @"
-          namespace Jarvis.Windows;
-          internal static class BuildInfo
-          {
-              internal const int ReleaseBuild = $env:GITHUB_RUN_NUMBER;
-          }
-          "@ | Set-Content windows/BuildInfo.cs -Encoding utf8
-      - name: Publish standalone Windows EXE
-        shell: pwsh
-        run: |
-          dotnet publish windows/Jarvis.Windows.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o windows/publish
-          Copy-Item windows/publish/Jarvis-Windows.exe Jarvis-Windows.exe
-      - name: Verify Windows executable starts
-        shell: pwsh
-        run: |
-          $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -ArgumentList '--self-test' -PassThru -Wait -WindowStyle Hidden
-          if ($process.ExitCode -ne 0) { throw "Jarvis self-test exited with code $($process.ExitCode)" }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: jarvis-windows
-          path: Jarvis-Windows.exe
-          if-no-files-found: error
-
   release:
     name: Publish Android release
     needs: [android]
@@ -123,21 +89,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           test -s release/Jarvis-Android.apk
-          gh release create "build-${{ github.run_number }}" release/Jarvis-Android.apk --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Jarvis Build #${{ github.run_number }}" --notes "Android APK signed with the existing Jarvis update key. Android installation requires system confirmation. Windows is attached separately when its build passes."
-
-  release-windows:
-    name: Attach verified Windows EXE
-    needs: [windows, release]
-    if: ${{ always() && needs.windows.result == 'success' && needs.release.result == 'success' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: jarvis-windows
-          path: release
-      - name: Attach Windows EXE
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          test -s release/Jarvis-Windows.exe
-          gh release upload "build-${{ github.run_number }}" release/Jarvis-Windows.exe --repo "${{ github.repository }}" --clobber
+          gh release create "build-${{ github.run_number }}" release/Jarvis-Android.apk --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Jarvis Build #${{ github.run_number }}" --notes "Android APK signed with the existing Jarvis update key. Android installation requires system confirmation. Windows work is paused. This release contains Android only."

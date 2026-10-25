@@ -6,12 +6,13 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 
 /** One-time, user-initiated model download. Recognition is fully local after installation. */
 class WakeModel(private val context: Context) {
     private val folder = File(context.filesDir, "vosk-model-small-en-us-0.15")
-    private val archiveUrl = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+    private val archiveUrl = "https://huggingface.co/rhasspy/vosk-models/resolve/e7ac2109d134b5f2404ba95389b2fb51916d4cab/en/vosk-model-small-en-us-0.15.zip"
 
     fun installed(): Boolean = File(folder, "am/final.mdl").isFile
 
@@ -30,6 +31,18 @@ class WakeModel(private val context: Context) {
             connection.inputStream.use { input -> archive.outputStream().use { output -> input.copyTo(output) } }
             connection.disconnect()
             if (archive.length() < 20_000_000 || archive.length() > 100_000_000) error("Model archive size is unexpected.")
+            val digest = MessageDigest.getInstance("SHA-256")
+            archive.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            val hash = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!hash.equals("30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498", true))
+                error("The downloaded model did not match the verified archive.")
             onProgress("Installing the offline speech model…")
             staging.deleteRecursively()
             staging.mkdirs()
