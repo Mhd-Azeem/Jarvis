@@ -98,6 +98,7 @@ jobs:
 
   windows:
     name: Build Windows EXE
+    continue-on-error: true
     if: github.event_name != 'schedule'
     runs-on: windows-latest
 
@@ -141,10 +142,9 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish combined release
-    needs: [android, windows]
-    # Evaluate dependencies even if Windows fails, but only publish on non-scheduled runs.
-    if: ${{ always() && github.event_name != 'schedule' && needs.android.result == 'success' }}
+    name: Publish Android APK release
+    needs: [android]
+    if: ${{ github.event_name != 'schedule' && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -154,26 +154,16 @@ jobs:
           name: jarvis-android
           path: release
 
-      - name: Download Windows EXE if available
-        if: ${{ needs.windows.result == 'success' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: jarvis-windows
-          path: release
-
       - name: Verify release files
         run: ls -lh release
 
-      - name: Publish Android release and optional Windows EXE
+      - name: Publish Android APK release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="build-${{ github.run_number }}"
-          WINDOWS_ASSET=""
-          if [ -f release/Jarvis-Windows.exe ]; then WINDOWS_ASSET="release/Jarvis-Windows.exe"; fi
           gh release create "$TAG" \
             release/Jarvis-installable.apk \
-            ${WINDOWS_ASSET:+$WINDOWS_ASSET} \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "Jarvis Build #${{ github.run_number }} — Auto Update" \
