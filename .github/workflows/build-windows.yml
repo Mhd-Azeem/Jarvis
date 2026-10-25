@@ -50,10 +50,16 @@ jobs:
         shell: pwsh
         run: |
           $env:JARVIS_SMOKE_LOG = Join-Path (Get-Location) 'jarvis-smoke-error.txt'
+          $env:JARVIS_SMOKE_IMAGE = Join-Path (Get-Location) 'jarvis-screen.png'
           $process = Start-Process -FilePath (Resolve-Path Jarvis-Windows.exe) -ArgumentList '--ui-smoke-test' -PassThru -Wait -WindowStyle Hidden
           if ($process.ExitCode -ne 0) {
             if (Test-Path $env:JARVIS_SMOKE_LOG) { Get-Content $env:JARVIS_SMOKE_LOG }
             throw "Jarvis desktop smoke test exited with code $($process.ExitCode)"
+          }
+          if (-not (Test-Path $env:JARVIS_SMOKE_IMAGE)) { if (Test-Path $env:JARVIS_SMOKE_LOG) { Get-Content $env:JARVIS_SMOKE_LOG }; throw 'Dashboard screenshot was not captured.' }
+          $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes($env:JARVIS_SMOKE_IMAGE))
+          for ($i = 0; $i -lt $encoded.Length; $i += 3000) {
+            Write-Output ('JARVIS_IMAGE_CHUNK=' + $encoded.Substring($i, [Math]::Min(3000, $encoded.Length - $i)))
           }
       - uses: actions/upload-artifact@v4
         with:

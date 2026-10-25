@@ -23,7 +23,25 @@ internal static class ModernProgram
                 form.Shown += (_, _) =>
                 {
                     var closeTimer = new System.Windows.Forms.Timer { Interval = 3000 };
-                    closeTimer.Tick += (_, _) => { closeTimer.Stop(); closeTimer.Dispose(); Application.Exit(); };
+                    closeTimer.Tick += (_, _) => {
+                        closeTimer.Stop(); closeTimer.Dispose();
+                        var imagePath = Environment.GetEnvironmentVariable("JARVIS_SMOKE_IMAGE");
+                        if (!string.IsNullOrWhiteSpace(imagePath))
+                        {
+                            try
+                            {
+                                using var screenshot = new Bitmap(form.Width, form.Height);
+                                form.DrawToBitmap(screenshot, new Rectangle(Point.Empty, form.Size));
+                                screenshot.Save(imagePath, ImageFormat.Png);
+                            }
+                            catch (Exception error)
+                            {
+                                var log = Environment.GetEnvironmentVariable("JARVIS_SMOKE_LOG");
+                                if (!string.IsNullOrWhiteSpace(log)) File.WriteAllText(log, error.ToString());
+                            }
+                        }
+                        Application.Exit();
+                    };
                     closeTimer.Start();
                 };
             }
