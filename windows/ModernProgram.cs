@@ -9,10 +9,12 @@ namespace Jarvis.Windows;
 internal static class ModernProgram
 {
     [STAThread]
-    private static void Main()
+    private static int Main(string[] args)
     {
+        if (args.Contains("--self-test")) return AssistantData.LoadSettings().Endpoint.StartsWith("https://", StringComparison.Ordinal) ? 0 : 1;
         ApplicationConfiguration.Initialize();
         Application.Run(new ModernJarvisForm());
+        return 0;
     }
 }
 
